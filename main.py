@@ -1,21 +1,26 @@
 import socket
 import threading
 
+from Packet import Packet
+
 
 class Peer:
-    def __init__(self, host, listen_port, send_port):
-        self.id = (host, listen_port)
+    def __init__(self, my_ip, target_ip, listen_port, send_port):
+        self.id = (my_ip, listen_port)
         self.send_port = send_port
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(self.id)
-        self.peer_adress =  (host, self.send_port)
+        self.peer_adress = (target_ip, self.send_port)
 
     def receive_messages(self):
         while True:
             try:
                 data, addr = self.socket.recvfrom(1024)
-                print(f"Recieved from {addr}: {data.decode()}")
+
+                decoded_message = data.decode()
+                packet = Packet(decoded_message)
+                print(f"\nReceived from IP>{addr[0]} Port>{addr[1]}: {packet.get_message()}")
 
             except Exception as e:
                 print(f"Error recieving message: {e}")
@@ -27,26 +32,34 @@ class Peer:
             if message == "!quit":
                 self.socket.close()
                 break
+
+            packet = Packet(message) #build a packet
             try:
-                self.socket.sendto(message.encode(), self.peer_adress) #sprav classu packet kde bude cely header
+                self.socket.sendto(packet.concatenate().encode(), self.peer_adress) #sprav classu packet kde bude cely header
             except Exception as e:
                 print(f"Error sending message to {peer}: {e}")
 
 
 
+
 if __name__ == '__main__':
-    IP = "localhost"
+
+    MY_IP = "localhost"
+    # PEERS_IP = input("Enter PEER's IP address: ")
+    # PEER_SEND_PORT = int(input("Enter your send port (should be the same as second's peer listening port): "))
+    # PEER_LISTEN_PORT = int(input("Enter your listening port (should be the same as second's peer sending port): "))
 
     whos_this = input("peer one (1) or peer two (2): ")
     if whos_this == "1":
+        PEERS_IP = "localhost"
         PEER_LISTEN_PORT = 3000
         PEER_SEND_PORT = 2000
     else:
+        PEERS_IP = "localhost"
         PEER_LISTEN_PORT = 2000
         PEER_SEND_PORT = 3000
 
-
-    peer = Peer(IP, PEER_LISTEN_PORT, PEER_SEND_PORT)
+    peer = Peer(MY_IP, PEERS_IP, PEER_LISTEN_PORT, PEER_SEND_PORT)
 
     receive_thread = threading.Thread(target=peer.receive_messages)
     receive_thread.daemon = True

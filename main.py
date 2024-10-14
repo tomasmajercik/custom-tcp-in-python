@@ -12,7 +12,7 @@ class Peer:
 
         # Receiving socket
         self.receiving_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.receiving_socket.bind((my_ip, listen_port))
+        self.receiving_socket.bind(self.id)
 
         # Sending socket (no need to bind, just used for sending)
         self.send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

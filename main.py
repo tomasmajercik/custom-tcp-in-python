@@ -8,15 +8,19 @@ class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
         self.id = (my_ip, listen_port)
         self.send_port = send_port
-
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.bind(self.id)
         self.peer_adress = (target_ip, self.send_port)
+
+        # Receiving socket
+        self.receiving_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.receiving_socket.bind((my_ip, listen_port))
+
+        # Sending socket (no need to bind, just used for sending)
+        self.send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     def receive_messages(self):
         while True:
             try:
-                data, addr = self.socket.recvfrom(1024)
+                data, addr = self.receiving_socket.recvfrom(1024)
 
                 decoded_message = data.decode()
                 packet = Packet(decoded_message)
@@ -30,12 +34,13 @@ class Peer:
         while True:
             message = input("Enter message: (!quit to quit) ")
             if message == "!quit":
-                self.socket.close()
+                self.send_port.close()
+                self.receiving_socket.close()
                 break
 
             packet = Packet(message) #build a packet
             try:
-                self.socket.sendto(packet.concatenate().encode(), self.peer_adress) #sprav classu packet kde bude cely header
+                self.send_socket.sendto(packet.concatenate().encode(), self.peer_adress) #sprav classu packet kde bude cely header
             except Exception as e:
                 print(f"Error sending message to {peer}: {e}")
 

@@ -39,24 +39,28 @@ class Peer:
         while retries < max_retries:
             try:
                 # send SYN
-                SYN_packet = Packet("", seq_num=self.seq_num, flags=0b001)  # SYN
+                SYN_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=0b001)  # SYN
                 self.send_socket.sendto(SYN_packet.concatenate().encode(), self.peer_address)
-                print(f"1. SENT handshake invite: {SYN_packet.concatenate()} (attempt {retries + 1})")
+                print(f"\n1. SENT handshake invite: {SYN_packet.concatenate()} (attempt {retries + 1})")
                 retries += 1
 
                 # Expect SYN/ACK
                 self.receiving_socket.settimeout(retry_interval) #if nothing received in interval, do not wait
                 data, addr = self.receiving_socket.recvfrom(1024)
+
                 SYN_ACK_packet = Packet.deconcatenate(data.decode())
 
                 if SYN_ACK_packet.flags == 0b011:  # if SYN/ACK received
                     print(f"2. RECEIVED handshake SYN/ACK: {SYN_ACK_packet.concatenate()}")
+                    self.seq_num += 1 #sent one phantom byte
                     self.ack_num = SYN_ACK_packet.seq_num + 1  # Update ACK number to one more than received seq num
                     ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=0b010)  # ACK
+                    
                     self.send_socket.sendto(ACK_packet.concatenate().encode(), self.peer_address)
                     print(f"3. SENT handshake ACK: {ACK_packet.concatenate()}")
+                    self.seq_num += 1 #after succesfull handshake, "I am waiting for this package"
 
-                    print("Handshake successful, connection initialized")
+                    print(f"\n## Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
                     return True
 
             except socket.timeout:
@@ -66,63 +70,66 @@ class Peer:
         print(f"Handshake timeout after {max_retries} retries")
         self.receiving_socket.close()
         return False
-
     def expect_handshake(self):
         max_time_duration = 30
         self.receiving_socket.settimeout(max_time_duration)
         #! dohodnut checksum
-
         try:
             while True:
                 data, addr = self.receiving_socket.recvfrom(1024)
                 SYN_packet = Packet.deconcatenate(data.decode())
                 if SYN_packet.flags == 0b001:  # if received SYN
-                    print(f"Received handshake SYN: {SYN_packet.concatenate()}")
-                    self.seq_num = random.randint(0, 1000)
+                    print(f"\n1. Received handshake SYN: {SYN_packet.concatenate()}")
                     self.ack_num = SYN_packet.seq_num + 1
 
                     SYN_ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=0b011)  # send SYN-ACK
                     self.send_socket.sendto(SYN_ACK_packet.concatenate().encode(), self.peer_address)
-                    print(f"Sent handshake SYN/ACK: {SYN_ACK_packet.concatenate()}")
+                    print(f"2. Sent handshake SYN/ACK: {SYN_ACK_packet.concatenate()}")
 
                     data, addr = self.receiving_socket.recvfrom(1024) #recieve ACK
                     ACK_packet = Packet.deconcatenate(data.decode())
 
                     if ACK_packet.flags == 0b010:  # if ACK received
-                        print("Handshake successful, connection initialized")
+                        print(f"3. Received handshake ACK: {ACK_packet.concatenate()}")
+                        self.seq_num += 1
+                        self.ack_num += 1
+                        print(f"\n##Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
+                        # self.ack_num += 1  # after succesfull handshake, "I am waiting for this package"
                         return True
         except socket.timeout:
             print(f"No handshake for {max_time_duration} seconds, exiting the code")
             return False
 
     def receive_messages(self):
-        expected_seq_num = self.ack_num
         while True:
             try:
                 data, addr = self.receiving_socket.recvfrom(1024)
                 packet = Packet.deconcatenate(data.decode())
 
-                if packet.seq_num == expected_seq_num:
-                    self.ack_num = packet.seq_num + len(packet.get_message())
+                if packet.seq_num == self.ack_num:
+                    self.ack_num += len(packet.get_message()) #add length of message to my ack_num
                     ack_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=0b010)
-                    self.send_socket.sendto(ack_packet.concatenate().encode(), addr)
+                    self.send_socket.sendto(ack_packet.concatenate().encode(), self.peer_address)
 
-                    expected_seq_num = packet.seq_num + len(packet.get_message())
                 else:
                     print("Out of order packet received, ignoring")
                     # Send an acknowledgment for the last valid packet
                     # ask for lost package
 
-                #! ak 30 sekund cakam a nic nedostanem, vypnem
                 #! ak receivnem SYN pozvanku tu (1 sa odpoji a znova pripoji)
 
-                print(f"\nReceived from IP>{addr[0]} Port>{addr[1]}: {packet.get_message()}")
+                # print(f"\nReceived from IP>{addr[0]} Port>{addr[1]}: {packet.concatenate()}")
+                if packet.flags != 0b010:
+                    print(f"Received << {packet.concatenate()}")
+                    print(f"#### seq:{self.seq_num} ack:{self.ack_num}")
 
-            except Exception:
+            except socket.timeout:
+                # print("here")
                 continue
+
     def send_message(self):
         while True:
-            message = input("Enter message: (!quit to quit) ")
+            message = input("Enter message: (!quit to quit) ").strip()
             if message == "!quit":
                 #! taktiez poslem flag 100 aby som terminoval komunikaciu
                 self.receiving_socket.close()
@@ -131,9 +138,10 @@ class Peer:
             packet = Packet(message, seq_num=self.seq_num, ack_num=self.ack_num, flags=0b000) #build a packet
             # Send the packet
             self.send_socket.sendto(packet.concatenate().encode(), self.peer_address)
-            print(f"Sent message: {packet.concatenate()}")
-
+            # print(f"Sent message: {packet.concatenate()}")
+            print(f"Sent >> {packet.concatenate()}")
             self.seq_num += len(message)  # Update seq_num based on message length
+
             try: # Wait for acknowledgment
                 self.receiving_socket.settimeout(5)
                 data, addr = self.receiving_socket.recvfrom(1024)
@@ -172,7 +180,7 @@ if __name__ == '__main__':
         print("Failed to establish connection exiting.")
         exit()
     else:
-        print("Starting data exchange")
+        print(f"#Starting data exchange\n")
 
     receive_thread = threading.Thread(target=peer.receive_messages)
     receive_thread.daemon = True

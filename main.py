@@ -1,6 +1,7 @@
 import socket
 import threading
 import random
+import time
 
 from Packet import Packet
 
@@ -23,6 +24,9 @@ class Peer:
         self.seq_num = random.randint(0, 1000)
         self.ack_num = 0
 
+        # Condition to synchronize sender and receiver
+        self.condition = threading.Condition()
+
     def handshake(self):
         if self.start_handshake: return self.initiate_handshake()
         elif not self.start_handshake: return self.expect_handshake()
@@ -33,8 +37,6 @@ class Peer:
         retries = 0
 
         #! dohodnut checksum
-        #! spravit aby davalo zmysel mat syn a ack num
-        #! prvy seq by mal byt random a preco tam mam 100
 
         while retries < max_retries:
             try:
@@ -69,6 +71,7 @@ class Peer:
 
         print(f"Handshake timeout after {max_retries} retries")
         self.receiving_socket.close()
+        self.receiving_socket.settimeout(None)
         return False
     def expect_handshake(self):
         max_time_duration = 30
@@ -95,68 +98,98 @@ class Peer:
                         self.ack_num += 1
                         print(f"\n##Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
                         # self.ack_num += 1  # after succesfull handshake, "I am waiting for this package"
+                        self.receiving_socket.settimeout(None)
                         return True
         except socket.timeout:
             print(f"No handshake for {max_time_duration} seconds, exiting the code")
+            self.receiving_socket.settimeout(None)
             return False
 
     def receive_messages(self):
         while True:
             try:
+                self.receiving_socket.settimeout(5)
                 data, addr = self.receiving_socket.recvfrom(1024)
                 packet = Packet.deconcatenate(data.decode())
 
                 if packet.seq_num == self.ack_num:
+                    if packet.flags != 0b010:  # if not flagged as ack print
+                        print(f"\n\nReceived << {packet.seq_num}|{packet.ack_num}|{packet.flags} said:\"{packet.message}\"")
+
                     self.ack_num += len(packet.get_message()) #add length of message to my ack_num
+
+                    self.condition.acquire()  # when receive the packet it, 'locks' itself so noone can interrupt him while checking the packet
                     ack_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=0b010)
                     self.send_socket.sendto(ack_packet.concatenate().encode(), self.peer_address)
+                    self.condition.release() # after all, it unlocks everything to allow other operations flow smoothly
+
 
                 else:
                     print("Out of order packet received, ignoring")
-                    # Send an acknowledgment for the last valid packet
-                    # ask for lost package
-
-                #! ak receivnem SYN pozvanku tu (1 sa odpoji a znova pripoji)
-
-                # print(f"\nReceived from IP>{addr[0]} Port>{addr[1]}: {packet.concatenate()}")
-                if packet.flags != 0b010:
-                    print(f"Received << {packet.concatenate()}")
-                    print(f"#### seq:{self.seq_num} ack:{self.ack_num}")
+                    #later we will send NACK / Send an acknowledgment for the last valid packet / ask for lost package
 
             except socket.timeout:
-                # print("here")
                 continue
 
-    def send_message(self):
-        while True:
-            message = input("Enter message: (!quit to quit) ").strip()
-            if message == "!quit":
-                #! taktiez poslem flag 100 aby som terminoval komunikaciu
-                self.receiving_socket.close()
-                break
+            print("\nMENU:")
+            print("'m' for message | 'f' for file | '!quit' for quit")
+            print("Choose an option: ")
 
-            packet = Packet(message, seq_num=self.seq_num, ack_num=self.ack_num, flags=0b000) #build a packet
-            # Send the packet
-            self.send_socket.sendto(packet.concatenate().encode(), self.peer_address)
-            # print(f"Sent message: {packet.concatenate()}")
-            print(f"Sent >> {packet.concatenate()}")
-            self.seq_num += len(message)  # Update seq_num based on message length
+    def send_message(self, message):
+        max_retries = 5
+        retries = 0
 
-            try: # Wait for acknowledgment
-                self.receiving_socket.settimeout(5)
+        packet = Packet(message, seq_num=self.seq_num, ack_num=self.ack_num, flags=0b000)
+
+        while retries < max_retries:
+            self.condition.acquire() # 'locks' itself so noone can interrupt him while preparing packet
+
+            self.send_socket.sendto(packet.concatenate().encode(), self.peer_address) #sends the package
+            print(f"Sent >> {packet.seq_num}|{packet.ack_num} msg: \"{message}\"")
+
+            try:
+                print("\n>waiting for ACKnowledgement>")
+                self.receiving_socket.settimeout(5) #waits 5 seconds for acknowledgement
                 data, addr = self.receiving_socket.recvfrom(1024)
                 ack_packet = Packet.deconcatenate(data.decode())
-                if ack_packet.flags == 0b010:  # ACK flag
-                    self.ack_num = ack_packet.seq_num  # Update acknowledgment number
+
+                if ack_packet.flags == 0b010 and ack_packet.ack_num == self.seq_num + len(message):
+                    print(f"<Acknowledgement succesfull<")
+                    self.seq_num += len(message)
+                    # self.condition.notify() # if acknowledgement by receiver, we notify other threads we are finished
+                    self.condition.release() # unlocks and openes fully to allow other operations to proceed smoothly
+                    break
             except socket.timeout:
-                print("Acknowledgment timeout, resending packet...")
+                retries += 1
+                print(f"Acknowledgment timeout, resending packet... (attempt {retries}/{max_retries})")
+                self.condition.release()
+        if retries == max_retries:
+            print(f"Failed to send message after {max_retries} attempts, giving up.")
 
+    def show_menu(self):
+        while True:
+            print("\nMENU:")
+            print("'m' for message | 'f' for file | '!quit' for quit")
+            choice = input("Choose an option: ")
 
+            if choice == 'm':
+                message = input("Enter message: ").strip()
+                self.send_message(message)
+            elif choice == 'f':
+                print("not ready yet")
+            elif choice == '3':
+                print("Exiting...")
+                self.receiving_socket.close()
+                break
+            else:
+                print("Invalid choice. Please try again.")
 
 
 if __name__ == '__main__':
 
+    # MY_IP = "192.168.0.1"
     MY_IP = "localhost"
+
     # PEERS_IP = input("Enter PEER's IP address: ")
     # PEER_SEND_PORT = int(input("Enter your send port (should be the same as second's peer listening port): "))
     # PEER_LISTEN_PORT = int(input("Enter your listening port (should be the same as second's peer sending port): "))
@@ -165,14 +198,15 @@ if __name__ == '__main__':
 
     whos_this = input("peer one (1) or peer two (2): ")
     if whos_this == "1":
+        # PEERS_IP = "192.168.0.2"
         PEERS_IP = "localhost"
-        PEER_LISTEN_PORT = 3000
-        PEER_SEND_PORT = 2000
+        PEER_LISTEN_PORT = 5000
+        PEER_SEND_PORT = 4000
         start_handshake = True
     else:
         PEERS_IP = "localhost"
-        PEER_LISTEN_PORT = 2000
-        PEER_SEND_PORT = 3000
+        PEER_LISTEN_PORT = 4000
+        PEER_SEND_PORT = 5000
         start_handshake = False
 
     peer = Peer(MY_IP, PEERS_IP, PEER_LISTEN_PORT, PEER_SEND_PORT, start_handshake)
@@ -186,4 +220,13 @@ if __name__ == '__main__':
     receive_thread.daemon = True
     receive_thread.start()
 
-    peer.send_message()
+    peer.show_menu()
+
+
+
+#need to be done:
+    # when !quit -> terminate both sides
+    # keep alive -> ak sa jeden odpoji, odpoji sa aj dryhy alebo posielam handshake
+    # ak je mismatch ack musim si poprosit ten package znova
+    # dohodnut ten fragment v handshaku
+    # upratat konzolu nech je tam vzdy to ze vyber si co chces poslat aj !quit aj vsetko

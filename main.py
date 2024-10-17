@@ -1,7 +1,6 @@
+import random
 import socket
 import threading
-import random
-import time
 
 from Packet import Packet
 
@@ -133,9 +132,9 @@ class Peer:
 
             print("\nMENU:")
             print("'m' for message | 'f' for file | '!quit' for quit")
-            print("Choose an option: ")
+            print(f"Choose an option: ")
 
-    def send_message(self, message):
+    def send_message(self, message, simulate_package_loss):
         max_retries = 5
         retries = 0
 
@@ -144,8 +143,12 @@ class Peer:
         while retries < max_retries:
             self.condition.acquire() # 'locks' itself so noone can interrupt him while preparing packet
 
-            self.send_socket.sendto(packet.concatenate().encode(), self.peer_address) #sends the package
-            print(f"Sent >> {packet.seq_num}|{packet.ack_num} msg: \"{message}\"")
+            if simulate_package_loss:
+                print("~simulating this packet was lost~")
+                simulate_package_loss = False
+            else:
+                self.send_socket.sendto(packet.concatenate().encode(), self.peer_address) #sends the package
+                print(f"Sent >> {packet.seq_num}|{packet.ack_num} msg: \"{message}\"")
 
             try:
                 print("\n>waiting for ACKnowledgement>")
@@ -169,12 +172,15 @@ class Peer:
     def show_menu(self):
         while True:
             print("\nMENU:")
-            print("'m' for message | 'f' for file | '!quit' for quit")
+            print("'m' for message | 'f' for file | 'sml' for simulate message lost | '!quit' for quit")
             choice = input("Choose an option: ")
 
             if choice == 'm':
                 message = input("Enter message: ").strip()
-                self.send_message(message)
+                self.send_message(message, False)
+            if choice == 'sml':
+                message = input("Enter message: ").strip()
+                self.send_message(message, True)
             elif choice == 'f':
                 print("not ready yet")
             elif choice == '3':
@@ -225,8 +231,11 @@ if __name__ == '__main__':
 
 
 #need to be done:
-    # when !quit -> terminate both sides
-    # keep alive -> ak sa jeden odpoji, odpoji sa aj dryhy alebo posielam handshake
-    # ak je mismatch ack musim si poprosit ten package znova
-    # dohodnut ten fragment v handshaku
+    # dohodnut ten fragment v handshaku - dalsia flaga
+    # when !quit -> terminate both sides - dalsia flaga
+    # keep alive -> ak sa jeden odpoji, odpoji sa aj dryhy alebo posielam handshake - dalsia flaga?
+    # ked poslem naraz package z jedneho na druhy peer tak sa to uplne doserie, preco....?
+
+    # ak je mismatch ack musim si poprosit ten package znova... should not happen due to stop&wait???
+
     # upratat konzolu nech je tam vzdy to ze vyber si co chces poslat aj !quit aj vsetko

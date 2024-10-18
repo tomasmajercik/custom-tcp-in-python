@@ -9,13 +9,11 @@ class Packet:
         return f"{self.seq_num}~{self.ack_num}~{self.flags:03b}~{self.message}"
 
     def get_message(self):
-        # parts = encoded_packet.split('|', 3)
-        # message = parts[3]
         return self.message
 
     @staticmethod
     def deconcatenate(packet_str):
-        parts = packet_str.split('~')
+        parts = packet_str.split('~', 3)
         seq_num = int(parts[0])
         ack_num = int(parts[1])
         flags = int(parts[2], 2)  # Parse binary string

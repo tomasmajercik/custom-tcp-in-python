@@ -4,6 +4,15 @@ import threading
 
 from Packet import Packet
 
+#flags:
+SYN = 0b0000
+ACK = 0b0000
+SYN_ACK = 0b0000
+CFL = 0b0000
+FRP = 0b0000
+KAL = 0b0000
+NACK = 0b0000
+TER = 0b0000
 
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port, start_handshake):
@@ -115,13 +124,15 @@ class Peer:
                     if packet.flags != 0b010:  # if not flagged as ack print
                         print(f"\n\nReceived << {packet.seq_num}|{packet.ack_num}|{packet.flags} said:\"{packet.message}\"")
 
-                    self.ack_num += len(packet.get_message()) #add length of message to my ack_num
+                    if len(packet.get_message()) == 0:
+                        self.ack_num += 1 #if message is empty, increment by 1
+                    else:
+                        self.ack_num += len(packet.get_message()) #add length of message to my ack_num
 
                     self.condition.acquire()  # when receive the packet it, 'locks' itself so noone can interrupt him while checking the packet
                     ack_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=0b010)
                     self.send_socket.sendto(ack_packet.concatenate().encode(), self.peer_address)
                     self.condition.release() # after all, it unlocks everything to allow other operations flow smoothly
-
 
                 else:
                     print("Out of order packet received, ignoring")
@@ -156,10 +167,16 @@ class Peer:
                 data, addr = self.receiving_socket.recvfrom(1024)
                 ack_packet = Packet.deconcatenate(data.decode())
 
-                if ack_packet.flags == 0b010 and ack_packet.ack_num == self.seq_num + len(message):
+                message_lenght = len(message)
+                if message_lenght == 0:
+                    message_lenght = 1
+
+                if ack_packet.flags == 0b010 and ack_packet.ack_num == self.seq_num + message_lenght:
                     print(f"<Acknowledgement succesfull<")
+
                     self.seq_num += len(message)
-                    # self.condition.notify() # if acknowledgement by receiver, we notify other threads we are finished
+
+                    self.condition.notify() # if acknowledgement by receiver, we notify other threads we are finished
                     self.condition.release() # unlocks and openes fully to allow other operations to proceed smoothly
                     break
             except socket.timeout:
@@ -173,17 +190,17 @@ class Peer:
         while True:
             print("\nMENU:")
             print("'m' for message | 'f' for file | 'sml' for simulate message lost | '!quit' for quit")
-            choice = input("Choose an option: ")
+            choice = input("Choose an option: ").strip()
 
             if choice == 'm':
                 message = input("Enter message: ").strip()
                 self.send_message(message, False)
-            if choice == 'sml':
+            elif choice == 'sml':
                 message = input("Enter message: ").strip()
                 self.send_message(message, True)
             elif choice == 'f':
                 print("not ready yet")
-            elif choice == '3':
+            elif choice == '!quit':
                 print("Exiting...")
                 self.receiving_socket.close()
                 break

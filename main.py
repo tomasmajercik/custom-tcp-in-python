@@ -1,3 +1,4 @@
+import queue
 import random
 import socket
 import threading
@@ -35,6 +36,10 @@ class Peer:
         # Condition to synchronize sender and receiver
         self.condition = threading.Condition()
 
+        # Message queue for sending
+        self.send_queue = queue.Queue()
+        self.ack_event = threading.Event()
+
     def handshake(self):
         if self.start_handshake: return self.initiate_handshake()
         elif not self.start_handshake: return self.expect_handshake()
@@ -52,6 +57,7 @@ class Peer:
                 SYN_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=0b001)  # SYN
                 self.send_socket.sendto(SYN_packet.concatenate().encode(), self.peer_address)
                 print(f"\n1. SENT handshake invite: {SYN_packet.concatenate()} (attempt {retries + 1})")
+                print(f"seq: {self.seq_num} ||| ack: {self.ack_num}")
                 retries += 1
 
                 # Expect SYN/ACK
@@ -62,12 +68,14 @@ class Peer:
 
                 if SYN_ACK_packet.flags == 0b011:  # if SYN/ACK received
                     print(f"2. RECEIVED handshake SYN/ACK: {SYN_ACK_packet.concatenate()}")
+                    print(f"seq: {self.seq_num} ||| ack: {self.ack_num}")
                     self.seq_num += 1 #sent one phantom byte
                     self.ack_num = SYN_ACK_packet.seq_num + 1  # Update ACK number to one more than received seq num
                     ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=0b010)  # ACK
-                    
+
                     self.send_socket.sendto(ACK_packet.concatenate().encode(), self.peer_address)
                     print(f"3. SENT handshake ACK: {ACK_packet.concatenate()}")
+                    print(f"seq: {self.seq_num} ||| ack: {self.ack_num}")
                     self.seq_num += 1 #after succesfull handshake, "I am waiting for this package"
 
                     print(f"\n## Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
@@ -91,11 +99,13 @@ class Peer:
                 SYN_packet = Packet.deconcatenate(data.decode())
                 if SYN_packet.flags == 0b001:  # if received SYN
                     print(f"\n1. Received handshake SYN: {SYN_packet.concatenate()}")
+                    print(f"seq: {self.seq_num} ||| ack: {self.ack_num}")
                     self.ack_num = SYN_packet.seq_num + 1
 
                     SYN_ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=0b011)  # send SYN-ACK
                     self.send_socket.sendto(SYN_ACK_packet.concatenate().encode(), self.peer_address)
                     print(f"2. Sent handshake SYN/ACK: {SYN_ACK_packet.concatenate()}")
+                    print(f"seq: {self.seq_num} ||| ack: {self.ack_num}")
 
                     data, addr = self.receiving_socket.recvfrom(1024) #recieve ACK
                     ACK_packet = Packet.deconcatenate(data.decode())
@@ -105,6 +115,7 @@ class Peer:
                         self.seq_num += 1
                         self.ack_num += 1
                         print(f"\n##Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
+                        print(f"seq: {self.seq_num} ||| ack: {self.ack_num}")
                         # self.ack_num += 1  # after succesfull handshake, "I am waiting for this package"
                         self.receiving_socket.settimeout(None)
                         return True
@@ -113,31 +124,24 @@ class Peer:
             self.receiving_socket.settimeout(None)
             return False
 
+
     def receive_messages(self):
         while True:
             try:
-                self.receiving_socket.settimeout(5)
                 data, addr = self.receiving_socket.recvfrom(1024)
                 packet = Packet.deconcatenate(data.decode())
 
                 if packet.seq_num == self.ack_num:
-                    if packet.flags != 0b010:  # if not flagged as ack print
-                        print(f"\n\nReceived << {packet.seq_num}|{packet.ack_num}|{packet.flags} said:\"{packet.message}\"")
+                    if packet.flags != 0b010:
+                        print(f"\nReceived << {packet.seq_num}|{packet.ack_num} said: \"{packet.message}\"")
 
-                    if len(packet.get_message()) == 0:
-                        self.ack_num += 1 #if message is empty, increment by 1
-                    else:
-                        self.ack_num += len(packet.get_message()) #add length of message to my ack_num
-
-                    self.condition.acquire()  # when receive the packet it, 'locks' itself so noone can interrupt him while checking the packet
+                    self.ack_num += len(packet.get_message()) or 1
                     ack_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=0b010)
                     self.send_socket.sendto(ack_packet.concatenate().encode(), self.peer_address)
-                    self.condition.release() # after all, it unlocks everything to allow other operations flow smoothly
 
+                    self.ack_event.set()  # Acknowledgment event is set (notify sender thread)
                 else:
                     print("Out of order packet received, ignoring")
-                    #later we will send NACK / Send an acknowledgment for the last valid packet / ask for lost package
-
             except socket.timeout:
                 continue
 
@@ -146,45 +150,30 @@ class Peer:
             print(f"Choose an option: ")
 
     def send_message(self, message, simulate_package_loss):
-        max_retries = 5
-        retries = 0
-
         packet = Packet(message, seq_num=self.seq_num, ack_num=self.ack_num, flags=0b000)
+        self.send_queue.put((packet, simulate_package_loss))
 
-        while retries < max_retries:
-            self.condition.acquire() # 'locks' itself so noone can interrupt him while preparing packet
+    def process_send_queue(self):
+        while True:
+            packet, simulate_package_loss = self.send_queue.get()
 
             if simulate_package_loss:
                 print("~simulating this packet was lost~")
                 simulate_package_loss = False
+                continue
+
+            print(f"Sent >> {packet.seq_num}|{packet.ack_num} msg: \"{packet.message}\"")
+            self.send_socket.sendto(packet.concatenate().encode(), self.peer_address)
+
+            self.ack_event.clear()  # Clear the acknowledgment event
+            self.ack_event.wait(timeout=5)  # Wait for acknowledgment for 5 seconds
+
+            if self.ack_event.is_set():
+                print("<Acknowledgment successful>")
+                self.seq_num += len(packet.message) or 1
             else:
-                self.send_socket.sendto(packet.concatenate().encode(), self.peer_address) #sends the package
-                print(f"Sent >> {packet.seq_num}|{packet.ack_num} msg: \"{message}\"")
-
-            try:
-                print("\n>waiting for ACKnowledgement>")
-                self.receiving_socket.settimeout(5) #waits 5 seconds for acknowledgement
-                data, addr = self.receiving_socket.recvfrom(1024)
-                ack_packet = Packet.deconcatenate(data.decode())
-
-                message_lenght = len(message)
-                if message_lenght == 0:
-                    message_lenght = 1
-
-                if ack_packet.flags == 0b010 and ack_packet.ack_num == self.seq_num + message_lenght:
-                    print(f"<Acknowledgement succesfull<")
-
-                    self.seq_num += len(message)
-
-                    self.condition.notify() # if acknowledgement by receiver, we notify other threads we are finished
-                    self.condition.release() # unlocks and openes fully to allow other operations to proceed smoothly
-                    break
-            except socket.timeout:
-                retries += 1
-                print(f"Acknowledgment timeout, resending packet... (attempt {retries}/{max_retries})")
-                self.condition.release()
-        if retries == max_retries:
-            print(f"Failed to send message after {max_retries} attempts, giving up.")
+                print("Acknowledgment timeout, resending packet")
+                self.send_queue.put((packet, False))  # Requeue for retry
 
     def show_menu(self):
         while True:
@@ -242,6 +231,10 @@ if __name__ == '__main__':
     receive_thread = threading.Thread(target=peer.receive_messages)
     receive_thread.daemon = True
     receive_thread.start()
+
+    send_thread = threading.Thread(target=peer.process_send_queue)
+    send_thread.daemon = True
+    send_thread.start()
 
     peer.show_menu()
 

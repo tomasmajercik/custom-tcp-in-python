@@ -6,22 +6,23 @@ class Packet:
         self.flags = flags
 
     def concatenate(self):
-        return f"{self.seq_num}~{self.ack_num}~{self.flags:03b}~{self.message}"
+        return f"{self.seq_num}|{self.ack_num}|{self.flags:03b}|{self.message}"
 
     def get_message(self):
+        # parts = encoded_packet.split('|', 3)
+        # message = parts[3]
         return self.message
 
     @staticmethod
     def deconcatenate(packet_str):
-        parts = packet_str.split('~', 3)
+        parts = packet_str.split('|')
         seq_num = int(parts[0])
         ack_num = int(parts[1])
         flags = int(parts[2], 2)  # Parse binary string
-        message = '~'.join(parts[3:]) #in case soebody wants to send message as hi|hi
+        message = parts[3]
         return Packet(message, seq_num, ack_num, flags)
 
     #co mi treba dokoncit
-        # fin ale podobne ako tcp handshake
-        # ak sa nevrati ack tak resendnut
-        # spravit poriadne ten stop and wait
-    
+    # fin ale podobne ako tcp handshake
+    # ak sa nevrati ack tak resendnut
+    # spravit poriadne ten stop and wait

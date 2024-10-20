@@ -23,6 +23,8 @@ class Peer:
         self.seq_num = random.randint(0, 1000)
         self.ack_num = 0
 
+        self.stop_and_wait = False
+
     def handshake(self):
         if self.start_handshake:
             return self.initiate_handshake()
@@ -72,7 +74,6 @@ class Peer:
         print(f"Handshake timeout after {max_retries} retries")
         self.receiving_socket.close()
         return False
-
     def expect_handshake(self):
         max_time_duration = 30
         self.receiving_socket.settimeout(max_time_duration)
@@ -105,7 +106,7 @@ class Peer:
             return False
 
     def receive_messages(self):
-        while True:
+        while True and not self.stop_and_wait:
             try:
                 data, addr = self.receiving_socket.recvfrom(1024)
                 packet = Packet.deconcatenate(data.decode())
@@ -133,6 +134,7 @@ class Peer:
 
     def send_message(self):
         while True:
+            self.stop_and_wait = False
             message = input("Enter message: (!quit to quit) ").strip()
             if message == "!quit":
                 # ! taktiez poslem flag 100 aby som terminoval komunikaciu
@@ -142,7 +144,9 @@ class Peer:
             packet = Packet(message, seq_num=self.seq_num, ack_num=self.ack_num, flags=0b000)  # build a packet
             # Send the packet
             self.send_socket.sendto(packet.concatenate().encode(), self.peer_address)
-            # print(f"Sent message: {packet.concatenate()}")
+            self.receiving_socket.settimeout(0) #so the receiving function stops listening
+            self.stop_and_wait = True #turn off this pear receiving function
+
             print(f"Sent >> {packet.concatenate()}")
             self.seq_num += len(message)  # Update seq_num based on message length
 
@@ -158,31 +162,31 @@ class Peer:
 
 if __name__ == '__main__':
 
-    MY_IP = input("Enter YOUR IP address: ")
-    PEERS_IP = input("Enter PEER's IP address: ")
-    PEER_SEND_PORT = int(input("Enter your send port (should be the same as second's peer listening port): "))
-    PEER_LISTEN_PORT = int(input("Enter your listening port (should be the same as second's peer sending port): "))
+    # MY_IP = input("Enter YOUR IP address: ")
+    # PEERS_IP = input("Enter PEER's IP address: ")
+    # PEER_SEND_PORT = int(input("Enter your send port (should be the same as second's peer listening port): "))
+    # PEER_LISTEN_PORT = int(input("Enter your listening port (should be the same as second's peer sending port): "))
+    #
+    # if MY_IP < PEERS_IP: start_handshake = True
+    # elif MY_IP==PEERS_IP:
+    #     if PEER_LISTEN_PORT > PEER_SEND_PORT:
+    #         start_handshake = True
+    #     else:
+    #         start_handshake = False
+    # else: start_handshake = False
 
-    if MY_IP < PEERS_IP: start_handshake = True
-    elif MY_IP==PEERS_IP:
-        if PEER_LISTEN_PORT > PEER_SEND_PORT:
-            start_handshake = True
-        else:
-            start_handshake = False
-    else: start_handshake = False
-
-    # MY_IP = "localhost"
-    # whos_this = input("peer one (1) or peer two (2): ")
-    # if whos_this == "1":
-    #     PEERS_IP = "localhost"
-    #     PEER_LISTEN_PORT = 8000
-    #     PEER_SEND_PORT = 7000
-    #     start_handshake = True
-    # else:
-    #     PEERS_IP = "localhost"
-    #     PEER_LISTEN_PORT = 7000
-    #     PEER_SEND_PORT = 8000
-    #     start_handshake = False
+    MY_IP = "localhost"
+    whos_this = input("peer one (1) or peer two (2): ")
+    if whos_this == "1":
+        PEERS_IP = "localhost"
+        PEER_LISTEN_PORT = 8000
+        PEER_SEND_PORT = 7000
+        start_handshake = True
+    else:
+        PEERS_IP = "localhost"
+        PEER_LISTEN_PORT = 7000
+        PEER_SEND_PORT = 8000
+        start_handshake = False
 
     peer = Peer(MY_IP, PEERS_IP, PEER_LISTEN_PORT, PEER_SEND_PORT, start_handshake)
     if not peer.handshake():

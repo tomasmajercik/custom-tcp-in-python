@@ -1,9 +1,19 @@
 import socket
 import threading
 import random
+import time
 
 from Packet import Packet
 
+#flags:
+SYN = 0b0000
+ACK = 0b0000
+SYN_ACK = 0b0000
+CFL = 0b0000
+FRP = 0b0000
+KAL = 0b0000
+NACK = 0b0000
+TER = 0b0000
 
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port, start_handshake):
@@ -23,7 +33,7 @@ class Peer:
         self.seq_num = random.randint(0, 1000)
         self.ack_num = 0
 
-        self.stop_and_wait = False
+        self.successful_delivery = threading.Event()
 
     def handshake(self):
         if self.start_handshake:
@@ -106,59 +116,87 @@ class Peer:
             return False
 
     def receive_messages(self):
-        while True and not self.stop_and_wait:
+        while True:
             try:
                 data, addr = self.receiving_socket.recvfrom(1024)
                 packet = Packet.deconcatenate(data.decode())
 
-                if packet.seq_num == self.ack_num:
+                if packet.flags == 0b010:
+                    self.successful_delivery.set()
+
+                elif packet.seq_num == self.ack_num:
                     self.ack_num += len(packet.get_message())  # add length of message to my ack_num
                     ack_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=0b010)
                     self.send_socket.sendto(ack_packet.concatenate().encode(), self.peer_address)
 
+                    if packet.flags != 0b010:
+                        print(f"\n__________________________________________")
+                        print(f"Received << {packet.concatenate()}")
+                        print(f"____________________________________________\n")
+
+                        # self.show_menu()
+                        # print(f"#### seq:{self.seq_num} ack:{self.ack_num}")
                 else:
-                    print("Out of order packet received, ignoring")
+                    print("!!Out of order packet received, ignoring!!")
                     # Send an acknowledgment for the last valid packet
                     # ask for lost package
 
-                # ! ak receivnem SYN pozvanku tu (1 sa odpoji a znova pripoji)
-
-                # print(f"\nReceived from IP>{addr[0]} Port>{addr[1]}: {packet.concatenate()}")
-                if packet.flags != 0b010:
-                    print(f"Received << {packet.concatenate()}")
-                    print(f"#### seq:{self.seq_num} ack:{self.ack_num}")
-
             except socket.timeout:
-                # print("here")
                 continue
 
-    def send_message(self):
-        while True:
-            self.stop_and_wait = False
-            message = input("Enter message: (!quit to quit) ").strip()
-            if message == "!quit":
-                # ! taktiez poslem flag 100 aby som terminoval komunikaciu
-                self.receiving_socket.close()
-                break
 
+    def send_message(self, message):
+        # while True:
+        # self.stop_and_wait = False
+        retries = 0
+        max_retries = 5
+
+        while retries < max_retries:
             packet = Packet(message, seq_num=self.seq_num, ack_num=self.ack_num, flags=0b000)  # build a packet
             # Send the packet
             self.send_socket.sendto(packet.concatenate().encode(), self.peer_address)
-            self.receiving_socket.settimeout(0) #so the receiving function stops listening
-            self.stop_and_wait = True #turn off this pear receiving function
+            # self.receiving_socket.settimeout(0) #so the receiving function stops listening
+            # self.stop_and_wait = True #turn off this pear receiving function
 
+
+            print(f"\n>>>>")
+            print(f"__________________________________________")
             print(f"Sent >> {packet.concatenate()}")
-            self.seq_num += len(message)  # Update seq_num based on message length
+            print(f"____________________________________________")
+            self.successful_delivery.clear()
 
-            try:  # Wait for acknowledgment
-                self.receiving_socket.settimeout(5)
-                data, addr = self.receiving_socket.recvfrom(1024)
-                ack_packet = Packet.deconcatenate(data.decode())
-                if ack_packet.flags == 0b010:  # ACK flag
-                    self.ack_num = ack_packet.seq_num  # Update acknowledgment number
-            except socket.timeout:
-                print("Acknowledgment timeout, resending packet...")
+            if self.successful_delivery.wait(timeout=5):
+                print("<<<<")
+                self.seq_num += len(message) # Update seq_num based on message length
+                break  # Exit the loop if message was successfully delivered
+            else:
+                print(f"Acknowledgment not received, retrying... (Attempt {retries + 1})")
+                retries += 1
 
+        if retries == max_retries:
+            print(f"Failed to deliver the message after {max_retries} attempts")
+
+
+    def show_menu(self):
+        while True:
+            print("\nMENU:")
+            print("'m' for message | 'f' for file | 'sml' for simulate message lost | '!quit' for quit")
+            choice = input("Choose an option: ").strip()
+
+            if choice == 'm':
+                message = input("Enter message: ").strip()
+                self.send_message(message)
+            # elif choice == 'sml':
+            #     message = input("Enter message: ").strip()
+            #     self.send_message(message, True)
+            elif choice == 'f':
+                print("not ready yet")
+            elif choice == '!quit':
+                print("Exiting...")
+                self.receiving_socket.close()
+                break
+            else:
+                print("Invalid choice. Please try again.")
 
 if __name__ == '__main__':
 
@@ -199,4 +237,4 @@ if __name__ == '__main__':
     receive_thread.daemon = True
     receive_thread.start()
 
-    peer.send_message()
+    peer.show_menu()

@@ -23,6 +23,5 @@ class Packet:
         return Packet(message, seq_num, ack_num, flags)
 
     #co mi treba dokoncit
-    # fin ale podobne ako tcp handshake
+    # ter ale podobne ako tcp handshake
     # ak sa nevrati ack tak resendnut
-    # spravit poriadne ten stop and wait

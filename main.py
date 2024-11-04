@@ -19,12 +19,10 @@ TER = 0b1100
 TER_ACK = 0b1110
 
 class Peer:
-    def __init__(self, my_ip, target_ip, listen_port, send_port, start_handshake):
+    def __init__(self, my_ip, target_ip, listen_port, send_port):
         self.id = (my_ip, listen_port)
         self.send_port = send_port
         self.peer_address = (target_ip, self.send_port)
-
-        self.start_handshake = start_handshake
 
         # Receiving socket
         self.receiving_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -41,85 +39,56 @@ class Peer:
         self.kill_communication = False
 
     def handshake(self):
-        if self.start_handshake:
-            return self.initiate_handshake()
-        elif not self.start_handshake:
-            return self.expect_handshake()
-
-    #!! proste posles, a cakas kym nedostanes, kedze sa nikdy nespustia naraz je to fajn
-    def initiate_handshake(self):
         retry_interval = 2
         max_retries = 15
         retries = 0
 
-        # ! dohodnut checksum
-        # ! spravit aby davalo zmysel mat syn a ack num
-        # ! prvy seq by mal byt random a preco tam mam 100
+        # Set timeout for waiting on incoming packets
+        self.receiving_socket.settimeout(retry_interval)
 
         while retries < max_retries:
             try:
-                # send SYN
-                SYN_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=SYN)  # SYN
-                self.send_socket.sendto(SYN_packet.concatenate(), self.peer_address)
-                print(f"\n1. SENT handshake invite: {SYN_packet.concatenate()} (attempt {retries + 1})")
+                try:
+                    data, addr = self.receiving_socket.recvfrom(1024)
+                    received_packet = Packet.deconcatenate(data)
+
+                    if received_packet.flags == SYN:  # Received SYN from the other peer
+                        print(f"\nReceived handshake SYN")
+                        self.ack_num = received_packet.seq_num + 1
+                        SYN_ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=SYN_ACK)
+                        self.send_socket.sendto(SYN_ACK_packet.concatenate(), self.peer_address)
+                        print(f"Sent handshake SYN/ACK")
+
+                    elif received_packet.flags == SYN_ACK:  # Received SYN/ACK in response to our SYN
+                        print(f"Received handshake SYN/ACK")
+                        self.seq_num += 1
+                        self.ack_num = received_packet.seq_num + 1
+                        ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=ACK)
+                        self.send_socket.sendto(ACK_packet.concatenate(), self.peer_address)
+                        print(f"Sent handshake ACK")
+                        print(f"\n## Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
+                        return True
+
+                    elif received_packet.flags == ACK:  # Received final ACK confirming the handshake
+                        print(f"Received handshake ACK")
+                        print(f"\n## Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
+                        return True
+
+                except socket.timeout:
+                    # If nothing was received, initiate the handshake by sending SYN
+                    if retries == 0:
+                        SYN_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=SYN)
+                        self.send_socket.sendto(SYN_packet.concatenate(), self.peer_address)
+                        print(f"\nSent handshake SYN (attempt {retries + 1})")
+
                 retries += 1
 
-                # Expect SYN/ACK
-                self.receiving_socket.settimeout(retry_interval)  # if nothing received in interval, do not wait
-                data, addr = self.receiving_socket.recvfrom(1024)
-
-                SYN_ACK_packet = Packet.deconcatenate(data)
-
-                if SYN_ACK_packet.flags == SYN_ACK:  # if SYN/ACK received
-                    print(f"2. RECEIVED handshake SYN/ACK: {SYN_ACK_packet.concatenate()}")
-                    self.seq_num += 1  # sent one phantom byte
-                    self.ack_num = SYN_ACK_packet.seq_num + 1  # Update ACK number to one more than received seq num
-                    ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=ACK)  # ACK
-
-                    self.send_socket.sendto(ACK_packet.concatenate(), self.peer_address)
-                    print(f"3. SENT handshake ACK: {ACK_packet.concatenate()}")
-                    self.seq_num += 1  # after succesfull handshake, "I am waiting for this package"
-
-                    print(f"\n## Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
-                    return True
-
             except socket.timeout:
-                print(f"retrying... (attempt {retries + 1})")
-                # continue in sending SYN packages
+                print(f"Retrying... (attempt {retries + 1})")
 
         print(f"Handshake timeout after {max_retries} retries")
         self.receiving_socket.close()
         return False
-    def expect_handshake(self):
-        max_time_duration = 30
-        self.receiving_socket.settimeout(max_time_duration)
-        # ! dohodnut checksum
-        try:
-            while True:
-                data, addr = self.receiving_socket.recvfrom(1024)
-                SYN_packet = Packet.deconcatenate(data)
-                if SYN_packet.flags == SYN:  # if received SYN
-                    print(f"\n1. Received handshake SYN: {SYN_packet.concatenate()}")
-                    self.ack_num = SYN_packet.seq_num + 1
-
-                    SYN_ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=SYN_ACK)  # send SYN-ACK
-                    self.send_socket.sendto(SYN_ACK_packet.concatenate(), self.peer_address)
-                    print(f"2. Sent handshake SYN/ACK: {SYN_ACK_packet.concatenate()}")
-
-                    data, addr = self.receiving_socket.recvfrom(1024)  # recieve ACK
-                    ACK_packet = Packet.deconcatenate(data)
-
-                    if ACK_packet.flags == ACK:  # if ACK received
-                        print(f"3. Received handshake ACK: {ACK_packet.concatenate()}")
-                        self.seq_num += 1
-                        self.ack_num += 1
-                        print(
-                            f"\n##Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
-                        # self.ack_num += 1  # after succesfull handshake, "I am waiting for this package"
-                        return True
-        except socket.timeout:
-            print(f"No handshake for {max_time_duration} seconds, exiting the code")
-            return False
 
     def receive_messages(self):
         while not self.freeze_loops:
@@ -190,10 +159,6 @@ class Peer:
         retry_interval = 2
         max_retries = 15
         retries = 0
-
-        # ! dohodnut checksum
-        # ! spravit aby davalo zmysel mat syn a ack num
-        # ! prvy seq by mal byt random a preco tam mam 100
 
         while retries < max_retries:
             try:
@@ -298,14 +263,12 @@ if __name__ == '__main__':
         PEERS_IP = "localhost"
         PEER_LISTEN_PORT = 8000
         PEER_SEND_PORT = 7000
-        start_handshake = True
     else:
         PEERS_IP = "localhost"
         PEER_LISTEN_PORT = 7000
         PEER_SEND_PORT = 8000
-        start_handshake = False
 
-    peer = Peer(MY_IP, PEERS_IP, PEER_LISTEN_PORT, PEER_SEND_PORT, start_handshake)
+    peer = Peer(MY_IP, PEERS_IP, PEER_LISTEN_PORT, PEER_SEND_PORT)
     if not peer.handshake():
         print("Failed to establish connection exiting.")
         exit()

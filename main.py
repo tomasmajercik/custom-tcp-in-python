@@ -1,18 +1,21 @@
 import socket
 import threading
 import random
+import os
+import sys
 
 from Packet import Packet
 
 #flags:
-SYN = 0b0000
-ACK = 0b0000
-SYN_ACK = 0b0000
-CFL = 0b0000
-FRP = 0b0000
-KAL = 0b0000
-NACK = 0b0000
-TER = 0b0000
+SYN = 0b0001
+ACK = 0b0010
+SYN_ACK = 0b0011
+CFL = 0b0100
+FRP = 0b1000
+KAL = 0b1001
+NACK = 0b1101
+TER = 0b1100
+TER_ACK = 0b1110
 
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port, start_handshake):
@@ -33,6 +36,8 @@ class Peer:
         self.ack_num = 0
 
         self.successful_delivery = threading.Event()
+        self.freeze_loops = False
+        self.kill_communication = False
 
     def handshake(self):
         if self.start_handshake:
@@ -115,10 +120,19 @@ class Peer:
             return False
 
     def receive_messages(self):
-        while True:
+        while not self.freeze_loops:
             try:
                 data, addr = self.receiving_socket.recvfrom(1024)
                 packet = Packet.deconcatenate(data.decode())
+
+                if packet.flags == TER:
+                    self.freeze_loops = True
+                    if self.respect_terminate_connection():
+                        self.receiving_socket.close()
+                        self.kill_communication = True
+                        os._exit(0)
+                        # sys.exit(0)
+                    return
 
                 if packet.flags == 0b010:
                     self.successful_delivery.set()
@@ -168,13 +182,83 @@ class Peer:
         if retries == max_retries:
             print(f"Failed to deliver the message after {max_retries} attempts")
 
+    def start_terminate_connection(self):
+        print("#starting termination process")
+        retry_interval = 2
+        max_retries = 15
+        retries = 0
+
+        # ! dohodnut checksum
+        # ! spravit aby davalo zmysel mat syn a ack num
+        # ! prvy seq by mal byt random a preco tam mam 100
+
+        while retries < max_retries:
+            try:
+                # send TER
+                TER_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=TER)  # SYN
+                self.send_socket.sendto(TER_packet.concatenate().encode(), self.peer_address)
+                print(f"\n1. SENT termination: {TER_packet.concatenate()} (attempt {retries + 1})")
+                retries += 1
+
+                # Expect TER/ACK
+                self.receiving_socket.settimeout(retry_interval)  # if nothing received in interval, do not wait
+                data, addr = self.receiving_socket.recvfrom(1024)
+
+                TER_ACK_packet = Packet.deconcatenate(data.decode())
+
+                if TER_ACK_packet.flags == TER_ACK:  # if TER/ACK received
+                    print(f"2. RECEIVED termination TER/ACK: {TER_ACK_packet.concatenate()}")
+                    self.seq_num += 1  # sent one phantom byte
+                    self.ack_num = TER_ACK_packet.seq_num + 1  # Update ACK number to one more than received seq num
+                    ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=ACK)  # ACK
+
+                    self.send_socket.sendto(ACK_packet.concatenate().encode(), self.peer_address)
+                    print(f"3. SENT termination ACK: {ACK_packet.concatenate()}")
+                    self.seq_num += 1  # after succesfull handshake, "I am waiting for this package"
+
+                    self.receiving_socket.close()
+                    self.kill_communication = True
+                    print(f"\n## Termination successful, connection ended")
+                    return
+
+
+
+            except socket.timeout:
+                print(f"retrying termination... (attempt {retries + 1})")
+
+
+
+    def respect_terminate_connection(self):
+        print(f"\n\n #Another peer terminates the connection!")
+        TER_ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=TER_ACK)  # send SYN-ACK
+        self.send_socket.sendto(TER_ACK_packet.concatenate().encode(), self.peer_address)
+        print(f"2. Sent termination TER/ACK: {TER_ACK_packet.concatenate()}")
+
+        while True:
+            data, addr = self.receiving_socket.recvfrom(1024)  # recieve ACK
+            ACK_packet = Packet.deconcatenate(data.decode())
+
+            if ACK_packet.flags == ACK:  # if ACK received
+                print(f"3. Received handshake ACK: {ACK_packet.concatenate()}")
+                print(f"\n##Termination successful, connection ended")
+                self.kill_communication = True
+                # self.ack_num += 1  # after succesfull handshake, "I am waiting for this package"
+                return True
+
+
 
     def show_menu(self):
         while True:
             print("\nMENU:")
             #print("'m' for message | 'f' for file | 'sml' for simulate message lost | '!quit' for quit")
             print("'m' for message | 'f' for file | '!quit' for quit")
+            # choice = sys.stdin.readline().strip()
+
+
             choice = input("Choose an option: ").strip()
+
+            if self.kill_communication:
+                return
 
             if choice == 'm':
                 message = input("Enter message: ").strip()
@@ -184,40 +268,40 @@ class Peer:
             #     self.send_message(message, True)
             elif choice == 'f':
                 print("not ready yet")
-            elif choice == '!quit':
-                print("Exiting...")
-                self.receiving_socket.close()
+            elif choice == '!q':
+                self.freeze_loops = True
+                self.start_terminate_connection()
                 break
             else:
                 print("Invalid choice. Please try again.")
 
 if __name__ == '__main__':
 
-    MY_IP = input("Enter YOUR IP address: ")
-    PEERS_IP = input("Enter PEER's IP address: ")
-    PEER_SEND_PORT = int(input("Enter your send port (should be the same as second's peer listening port): "))
-    PEER_LISTEN_PORT = int(input("Enter your listening port (should be the same as second's peer sending port): "))
+    # MY_IP = input("Enter YOUR IP address: ")
+    # PEERS_IP = input("Enter PEER's IP address: ")
+    # PEER_SEND_PORT = int(input("Enter your send port (should be the same as second's peer listening port): "))
+    # PEER_LISTEN_PORT = int(input("Enter your listening port (should be the same as second's peer sending port): "))
+    #
+    # if MY_IP < PEERS_IP: start_handshake = True
+    # elif MY_IP==PEERS_IP:
+    #     if PEER_LISTEN_PORT > PEER_SEND_PORT:
+    #         start_handshake = True
+    #     else:
+    #         start_handshake = False
+    # else: start_handshake = False
 
-    if MY_IP < PEERS_IP: start_handshake = True
-    elif MY_IP==PEERS_IP:
-        if PEER_LISTEN_PORT > PEER_SEND_PORT:
-            start_handshake = True
-        else:
-            start_handshake = False
-    else: start_handshake = False
-
-    # MY_IP = "localhost"
-    # whos_this = input("peer one (1) or peer two (2): ")
-    # if whos_this == "1":
-    #     PEERS_IP = "localhost"
-    #     PEER_LISTEN_PORT = 8000
-    #     PEER_SEND_PORT = 7000
-    #     start_handshake = True
-    # else:
-    #     PEERS_IP = "localhost"
-    #     PEER_LISTEN_PORT = 7000
-    #     PEER_SEND_PORT = 8000
-    #     start_handshake = False
+    MY_IP = "localhost"
+    whos_this = input("peer one (1) or peer two (2): ")
+    if whos_this == "1":
+        PEERS_IP = "localhost"
+        PEER_LISTEN_PORT = 8000
+        PEER_SEND_PORT = 7000
+        start_handshake = True
+    else:
+        PEERS_IP = "localhost"
+        PEER_LISTEN_PORT = 7000
+        PEER_SEND_PORT = 8000
+        start_handshake = False
 
     peer = Peer(MY_IP, PEERS_IP, PEER_LISTEN_PORT, PEER_SEND_PORT, start_handshake)
     if not peer.handshake():

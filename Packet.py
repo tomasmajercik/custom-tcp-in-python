@@ -6,7 +6,7 @@ class Packet:
         self.flags = flags
 
     def concatenate(self):
-        return f"{self.seq_num}|{self.ack_num}|{self.flags:03b}|{self.message}"
+        return f"{self.seq_num}|{self.ack_num}|{self.flags:04b}|{self.message}"
 
     def get_message(self):
         # parts = encoded_packet.split('|', 3)

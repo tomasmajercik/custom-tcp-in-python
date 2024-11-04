@@ -256,7 +256,6 @@ if __name__ == '__main__':
     #     else:
     #         start_handshake = False
     # else: start_handshake = False
-
     MY_IP = "localhost"
     whos_this = input("peer one (1) or peer two (2): ")
     if whos_this == "1":

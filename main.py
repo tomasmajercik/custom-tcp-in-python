@@ -3,21 +3,24 @@ import socket
 import threading
 import time
 from collections import deque
-from pyexpat.errors import messages
 
 from Packet import Packet
 
 #flags:
-SYN = 0b0001
 ACK = 0b0010
+NACK = 0b1101
+NONE = 0b0000
+
+SYN = 0b0001
 SYN_ACK = 0b0011
+
 CFL = 0b0100
 FRP = 0b1000
 KAL = 0b1001
-NACK = 0b1101
+KAL_ACK = 0b1011
+
 TER = 0b1100
 TER_ACK = 0b1110
-NONE = 0b0000
 
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
@@ -39,6 +42,8 @@ class Peer:
         self.message_queue = deque()
 
         self.successful_delivery = threading.Event()
+        self.successful_kal_delivery = threading.Event()
+
         self.freeze_loops = False
         self.kill_communication = False
 
@@ -110,8 +115,15 @@ class Peer:
                         self.kill_communication = True
                     return
 
+                if packet.flags == KAL:
+                    print("Received keep-alive KAL. Sending KAL/ACK.")
+                    kal_ack_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=KAL_ACK)
+                    self.enqueue_messages(kal_ack_packet, True)
+
                 if packet.flags == ACK:
                     self.successful_delivery.set()
+                if packet.flags == KAL_ACK:
+                    self.successful_kal_delivery.set()
 
                 elif packet.seq_num == self.ack_num:
                     self.ack_num += len(packet.get_message())  # add length of message to my ack_num
@@ -137,7 +149,6 @@ class Peer:
                 self.message_queue.appendleft(message)
             else:
                 self.message_queue.append(message)
-
     def send_from_queue(self):
         while not self.freeze_loops:
             if not self.message_queue:
@@ -172,6 +183,22 @@ class Peer:
                     with self.queue_lock:
                         self.message_queue.popleft()
 
+    def start_keep_alive(self):
+        while not self.kill_communication:
+            kal_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=KAL)
+            self.enqueue_messages(kal_packet, True) # prioretize the KAL package
+            print("~~~Sent keep-alive KAL~~~")
+
+            self.successful_kal_delivery.clear()
+
+            # Wait for ACK
+            if self.successful_kal_delivery.wait(timeout=5):
+                print("Keep-alive ACK received. Other peer is still active")
+            else:
+                print("No keep-alive ACK received. Peer is not connected.")
+                # start termination?
+
+            time.sleep(5)
 
     def start_terminate_connection(self):
         print("#starting termination process")
@@ -234,7 +261,7 @@ class Peer:
         while True:
             print("\nMENU:")
             #print("'m' for message | 'f' for file | 'sml' for simulate message lost | '!quit' for quit")
-            print("'m' for message | 'f' for file | '!quit' for quit")
+            print("'m' for message | 'f' for file | '!q / !quit' for quit")
 
 
             choice = input("Choose an option: ").strip()
@@ -250,7 +277,7 @@ class Peer:
             #     self.send_message(message, True)
             elif choice == 'f':
                 print("not ready yet")
-            elif choice == '!q':
+            elif choice == '!q' or '!quit':
                 self.freeze_loops = True
                 self.start_terminate_connection()
                 break
@@ -291,10 +318,16 @@ if __name__ == '__main__':
         print(f"#Starting data exchange\n")
 
     send_thread = threading.Thread(target=peer.send_from_queue)
+    send_thread.daemon = True #?
     send_thread.start()
 
     receive_thread = threading.Thread(target=peer.receive_messages)
     receive_thread.daemon = True
     receive_thread.start()
+
+    if whos_this == '1':
+        keep_alive_thread = threading.Thread(target=peer.start_keep_alive)
+        keep_alive_thread.daemon = True
+        keep_alive_thread.start()
 
     peer.show_menu()

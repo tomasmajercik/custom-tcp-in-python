@@ -58,13 +58,14 @@ class Peer:
                         SYN_ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=SYN_ACK)
                         self.send_socket.sendto(SYN_ACK_packet.concatenate(), self.peer_address)
                         print(f"Sent handshake SYN/ACK")
+                        self.seq_num += 1
 
                     elif received_packet.flags == SYN_ACK:  # Received SYN/ACK in response to our SYN
                         print(f"Received handshake SYN/ACK")
                         self.seq_num += 1
-                        self.ack_num = received_packet.seq_num + 1
                         ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=ACK)
                         self.send_socket.sendto(ACK_packet.concatenate(), self.peer_address)
+                        self.ack_num = received_packet.seq_num + 1
                         print(f"Sent handshake ACK")
                         print(f"\n## Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
                         return True

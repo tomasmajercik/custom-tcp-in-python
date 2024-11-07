@@ -1,11 +1,11 @@
 import random
 import socket
 import threading
+import time
+from collections import deque
+from pyexpat.errors import messages
 
 from Packet import Packet
-
-# import os
-# import sys
 
 #flags:
 SYN = 0b0001
@@ -17,6 +17,7 @@ KAL = 0b1001
 NACK = 0b1101
 TER = 0b1100
 TER_ACK = 0b1110
+NONE = 0b0000
 
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
@@ -33,6 +34,9 @@ class Peer:
 
         self.seq_num = random.randint(0, 1000)
         self.ack_num = 0
+
+        self.queue_lock = threading.Lock()
+        self.message_queue = deque()
 
         self.successful_delivery = threading.Event()
         self.freeze_loops = False
@@ -101,10 +105,9 @@ class Peer:
                     print(f"\n\n #Another peer terminates the connection!")
                     print(f"1. RECEIVED termination TER: {packet.concatenate()}")
                     self.freeze_loops = True
-                    if self.respect_terminate_connection():
+                    if self.answer_terminate_connection():
                         self.receiving_socket.close()
                         self.kill_communication = True
-                        # os._exit(0)
                     return
 
                 if packet.flags == ACK:
@@ -128,32 +131,47 @@ class Peer:
             except socket.timeout:
                 continue
 
-
-    def send_message(self, message):
-        retries = 0
-        max_retries = 5
-
-        while retries < max_retries:
-            packet = Packet(message, seq_num=self.seq_num, ack_num=self.ack_num, flags=0b000)  # build a packet
-            # Send the packet
-            self.send_socket.sendto(packet.concatenate(), self.peer_address)
-
-            print(f"\n>>>>")
-            print(f"__________________________________________")
-            print(f"Sent >> {message}")
-            print(f"____________________________________________")
-            self.successful_delivery.clear()
-
-            if self.successful_delivery.wait(timeout=5):
-                print("<<<<")
-                self.seq_num += len(message) # Update seq_num based on message length
-                break  # Exit the loop if message was successfully delivered
+    def enqueue_messages(self, message, push_to_front = False):
+        with self.queue_lock:
+            if push_to_front:
+                self.message_queue.appendleft(message)
             else:
-                print(f"Acknowledgment not received, retrying... (Attempt {retries + 1})")
-                retries += 1
+                self.message_queue.append(message)
 
-        if retries == max_retries:
-            print(f"Failed to deliver the message after {max_retries} attempts")
+    def send_from_queue(self):
+        while not self.freeze_loops:
+            if not self.message_queue:
+                time.sleep(0.1) # if nothing is in the queue, busy wait a while
+                continue
+
+            with self.queue_lock:
+                message = self.message_queue[0] # get the first element in the queue
+
+            retries = 0
+            max_retries = 5
+
+            while retries < max_retries:
+                packet = Packet(message, seq_num=self.seq_num, ack_num=self.ack_num, flags=NONE)
+                self.send_socket.sendto(packet.concatenate(), self.peer_address)
+
+                print(f"\n>>>> \nSent: {message}")
+                self.successful_delivery.clear()
+
+                if self.successful_delivery.wait(timeout=5):
+                    print("<<<<")
+                    self.seq_num += len(message)  # Update seq_num on success
+                    with self.queue_lock:
+                        self.message_queue.popleft()  # Remove the sended message from the queue
+                    break
+                else:
+                    print(f"Retrying message '{message}'... (Attempt {retries + 1})")
+                    retries += 1
+
+                if retries == max_retries:
+                    print(f"Failed to deliver message message after {max_retries} attempts")
+                    with self.queue_lock:
+                        self.message_queue.popleft()
+
 
     def start_terminate_connection(self):
         print("#starting termination process")
@@ -194,10 +212,7 @@ class Peer:
 
             except socket.timeout:
                 print(f"retrying termination... (attempt {retries + 1})")
-
-
-
-    def respect_terminate_connection(self):
+    def answer_terminate_connection(self):
         TER_ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=TER_ACK)  # send SYN-ACK
         self.send_socket.sendto(TER_ACK_packet.concatenate(), self.peer_address)
         print(f"2. Sent termination TER/ACK: {TER_ACK_packet.concatenate()}")
@@ -220,7 +235,6 @@ class Peer:
             print("\nMENU:")
             #print("'m' for message | 'f' for file | 'sml' for simulate message lost | '!quit' for quit")
             print("'m' for message | 'f' for file | '!quit' for quit")
-            # choice = sys.stdin.readline().strip()
 
 
             choice = input("Choose an option: ").strip()
@@ -230,7 +244,7 @@ class Peer:
 
             if choice == 'm':
                 message = input("Enter message: ").strip()
-                self.send_message(message)
+                self.enqueue_messages(message)
             # elif choice == 'sml':
             #     message = input("Enter message: ").strip()
             #     self.send_message(message, True)
@@ -275,6 +289,9 @@ if __name__ == '__main__':
         exit()
     else:
         print(f"#Starting data exchange\n")
+
+    send_thread = threading.Thread(target=peer.send_from_queue)
+    send_thread.start()
 
     receive_thread = threading.Thread(target=peer.receive_messages)
     receive_thread.daemon = True

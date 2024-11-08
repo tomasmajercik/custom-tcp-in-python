@@ -116,16 +116,17 @@ class Peer:
                     return
 
                 elif packet.flags == KAL:
-                    self.enqueue_messages("", KAL_ACK, True)
+                    self.enqueue_messages("KAL-ACK", KAL_ACK, True)
+                elif packet.flags == KAL_ACK:
+                    self.successful_kal_delivery.set()
 
                 elif packet.flags == ACK:
                     self.successful_delivery.set()
-                elif packet.flags == KAL_ACK:
-                    self.successful_kal_delivery.set()
 
                 elif packet.seq_num == self.ack_num:
                     self.ack_num += len(packet.message)  # add length of message to my ack_num
                     ack_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=ACK)
+                    print("sending ack packet:")
                     self.send_socket.sendto(ack_packet.concatenate(), self.peer_address)
 
                     if packet.flags != ACK:
@@ -167,12 +168,17 @@ class Peer:
                     print(f"\n>>>> \nSent KAL package")
                 elif packet.flags == KAL_ACK:
                     print(f"\n>>>> \nSent KAL_ACK package")
+                    with self.queue_lock:
+                        self.message_queue.popleft()
+                    break
                 else:
                     print(f"\n>>>> \nSent: {packet.seq_num}|{packet.ack_num}|{packet.message}")
 
                 self.successful_delivery.clear()
+                print("waiting for ack")
 
                 if self.successful_delivery.wait(timeout=5) or self.successful_kal_delivery.wait(timeout=5):
+                    print("ack received")
                     print("<<<<")
                     self.seq_num += len(packet.message)  # Update seq_num on success
                     with self.queue_lock:
@@ -190,17 +196,17 @@ class Peer:
     def start_keep_alive(self):
         last_kal_sent_time = time.time()  # Track the last time a KAL was sent
         while not self.kill_communication:
+            self.successful_kal_delivery.clear()
             # Only send KAL if enough time has passed
             if time.time() - last_kal_sent_time >= 5:
-                self.enqueue_messages("", KAL, True)  # prioritize the KAL package
+                self.enqueue_messages("KAL", KAL, True)  # prioritize the KAL package
                 last_kal_sent_time = time.time()  # Update last send time
 
-            self.successful_kal_delivery.clear()
 
             # Wait for KAL/ACK
             if self.successful_kal_delivery.wait(timeout=5):
                 print("✓ Keep-alive ACK received. Other peer is still active ✓\n<<<<")
-            else:
+            elif not self.successful_kal_delivery.wait(timeout=5):
                 print("x No keep-alive ACK received. Peer is not connected. x\n<<<<")
                 # Optionally start termination if no ACK is received
 

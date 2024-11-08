@@ -157,8 +157,8 @@ class Peer:
                 time.sleep(1) # if nothing is in the queue, busy wait a while
                 continue
 
-            with self.queue_lock:
-                packet = self.message_queue[0] # get the first element in the queue
+            # with self.queue_lock:
+            packet = self.message_queue[0] # get the first element in the queue
 
             retries = 0
             max_retries = 5
@@ -182,16 +182,20 @@ class Peer:
                         self.message_queue.popleft()  # Remove the sended message from the queue
                     break
                 else:
-                    print(f"Retrying message '{packet.message}'... (Attempt {retries + 1})")
+                    if packet.flags == KAL:
+                        self.successful_delivery.clear()
+                    else:
+                        print(f"Retrying message '{packet.message}'... (Attempt {retries + 1})")
                     retries += 1
 
                 if retries == max_retries:
-                    print(f"Failed to deliver message message after {max_retries} attempts")
+                    # print(f"Failed to deliver message message after {max_retries} attempts")
                     with self.queue_lock:
                         self.message_queue.popleft()
     def start_keep_alive(self):
-
         kal_delivery_error = 0
+        delay = random.uniform(3, 10)
+        time.sleep(delay)
 
         while not self.kill_communication:
             self.successful_kal_delivery.clear()
@@ -204,7 +208,11 @@ class Peer:
                 kal_delivery_error += 1
 
             if kal_delivery_error == 3:
-                print(f"!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
+                print(f"\n!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
+                print("(enter anything to proceed)")
+                self.freeze_loops = True
+                self.kill_communication = True
+                return
 
             time.sleep(5) #for 5 seconds, do nothing
 
@@ -335,9 +343,8 @@ if __name__ == '__main__':
     receive_thread.daemon = True
     receive_thread.start()
 
-    if whos_this == '1':
-        keep_alive_thread = threading.Thread(target=peer.start_keep_alive)
-        keep_alive_thread.daemon = True
-        keep_alive_thread.start()
+    keep_alive_thread = threading.Thread(target=peer.start_keep_alive)
+    keep_alive_thread.daemon = True
+    keep_alive_thread.start()
 
     peer.show_menu()

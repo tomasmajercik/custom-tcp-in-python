@@ -42,7 +42,6 @@ class Peer:
         self.message_queue = deque()
 
         self.successful_delivery = threading.Event()
-        self.successful_kal_delivery = threading.Event()
 
         self.freeze_loops = False
         self.kill_communication = False
@@ -115,18 +114,12 @@ class Peer:
                         self.kill_communication = True
                     return
 
-                elif packet.flags == KAL:
-                    self.enqueue_messages("KAL-ACK", KAL_ACK, True)
-                elif packet.flags == KAL_ACK:
-                    self.successful_kal_delivery.set()
-
                 elif packet.flags == ACK:
                     self.successful_delivery.set()
 
                 elif packet.seq_num == self.ack_num:
                     self.ack_num += len(packet.message)  # add length of message to my ack_num
                     ack_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=ACK)
-                    print("sending ack packet:")
                     self.send_socket.sendto(ack_packet.concatenate(), self.peer_address)
 
                     if packet.flags != ACK:
@@ -164,21 +157,11 @@ class Peer:
             while retries < max_retries:
                 self.send_socket.sendto(packet.concatenate(), self.peer_address)
 
-                if packet.flags == KAL:
-                    print(f"\n>>>> \nSent KAL package")
-                elif packet.flags == KAL_ACK:
-                    print(f"\n>>>> \nSent KAL_ACK package")
-                    with self.queue_lock:
-                        self.message_queue.popleft()
-                    break
-                else:
-                    print(f"\n>>>> \nSent: {packet.seq_num}|{packet.ack_num}|{packet.message}")
+                print(f"\n>>>> \nSent: {packet.seq_num}|{packet.ack_num}|{packet.message}")
 
                 self.successful_delivery.clear()
-                print("waiting for ack")
 
-                if self.successful_delivery.wait(timeout=5) or self.successful_kal_delivery.wait(timeout=5):
-                    print("ack received")
+                if self.successful_delivery.wait(timeout=5):
                     print("<<<<")
                     self.seq_num += len(packet.message)  # Update seq_num on success
                     with self.queue_lock:
@@ -192,25 +175,8 @@ class Peer:
                     print(f"Failed to deliver message message after {max_retries} attempts")
                     with self.queue_lock:
                         self.message_queue.popleft()
-
     def start_keep_alive(self):
-        last_kal_sent_time = time.time()  # Track the last time a KAL was sent
-        while not self.kill_communication:
-            self.successful_kal_delivery.clear()
-            # Only send KAL if enough time has passed
-            if time.time() - last_kal_sent_time >= 5:
-                self.enqueue_messages("KAL", KAL, True)  # prioritize the KAL package
-                last_kal_sent_time = time.time()  # Update last send time
-
-
-            # Wait for KAL/ACK
-            if self.successful_kal_delivery.wait(timeout=5):
-                print("✓ Keep-alive ACK received. Other peer is still active ✓\n<<<<")
-            elif not self.successful_kal_delivery.wait(timeout=5):
-                print("x No keep-alive ACK received. Peer is not connected. x\n<<<<")
-                # Optionally start termination if no ACK is received
-
-            time.sleep(0.1)
+        return
 
     def start_terminate_connection(self):
         print("#starting termination process")

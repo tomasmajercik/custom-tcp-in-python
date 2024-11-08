@@ -42,6 +42,7 @@ class Peer:
         self.message_queue = deque()
 
         self.successful_delivery = threading.Event()
+        self.successful_kal_delivery = threading.Event()
 
         self.freeze_loops = False
         self.kill_communication = False
@@ -117,6 +118,14 @@ class Peer:
                 elif packet.flags == ACK:
                     self.successful_delivery.set()
 
+                elif packet.flags == KAL:
+                    self.enqueue_messages("KAL/ACK", KAL_ACK, True)
+                    # time.sleep(0.1)
+                    self.successful_delivery.set()
+                elif packet.flags == KAL_ACK:
+                    self.successful_delivery.set()
+
+
                 elif packet.seq_num == self.ack_num:
                     self.ack_num += len(packet.message)  # add length of message to my ack_num
                     ack_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=ACK)
@@ -145,7 +154,7 @@ class Peer:
     def send_from_queue(self):
         while not self.freeze_loops:
             if not self.message_queue:
-                time.sleep(0.1) # if nothing is in the queue, busy wait a while
+                time.sleep(1) # if nothing is in the queue, busy wait a while
                 continue
 
             with self.queue_lock:
@@ -157,13 +166,18 @@ class Peer:
             while retries < max_retries:
                 self.send_socket.sendto(packet.concatenate(), self.peer_address)
 
-                print(f"\n>>>> \nSent: {packet.seq_num}|{packet.ack_num}|{packet.message}")
-
+                if packet.flags == NONE:
+                    print(f"\n>>>> \nSent: {packet.seq_num}|{packet.ack_num}|{packet.message}")
                 self.successful_delivery.clear()
 
-                if self.successful_delivery.wait(timeout=5):
-                    print("<<<<")
-                    self.seq_num += len(packet.message)  # Update seq_num on success
+                if packet.flags == KAL_ACK:
+                    self.successful_delivery.set()
+
+
+                if self.successful_delivery.wait(timeout=5): # or self.successful_kal_delivery.wait(timeout=5):
+                    if packet.flags == NONE:
+                        self.seq_num += len(packet.message)  # Update seq_num on success
+                        print("<<<<")
                     with self.queue_lock:
                         self.message_queue.popleft()  # Remove the sended message from the queue
                     break
@@ -176,6 +190,24 @@ class Peer:
                     with self.queue_lock:
                         self.message_queue.popleft()
     def start_keep_alive(self):
+
+        kal_delivery_error = 0
+
+        while not self.kill_communication:
+            self.successful_kal_delivery.clear()
+            self.enqueue_messages("(kal)", KAL, push_to_front=True)
+
+            if self.successful_delivery.wait(timeout=5):
+                kal_delivery_error = 0
+                # print(f"✓ other peer still alive ✓ {kal_delivery_error}")
+            elif not self.successful_kal_delivery.wait(timeout=5):
+                kal_delivery_error += 1
+
+            if kal_delivery_error == 3:
+                print(f"!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
+
+            time.sleep(5) #for 5 seconds, do nothing
+
         return
 
     def start_terminate_connection(self):

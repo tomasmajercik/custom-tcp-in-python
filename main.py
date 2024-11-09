@@ -123,7 +123,7 @@ class Peer:
                     # time.sleep(0.1)
                     self.successful_delivery.set()
                 elif packet.flags == KAL_ACK:
-                    self.successful_delivery.set()
+                    self.successful_kal_delivery.set()
 
 
                 elif packet.seq_num == self.ack_num:
@@ -154,7 +154,6 @@ class Peer:
     def send_from_queue(self):
         while not self.freeze_loops:
             if not self.message_queue:
-                time.sleep(1) # if nothing is in the queue, busy wait a while
                 continue
 
             # with self.queue_lock:
@@ -166,8 +165,8 @@ class Peer:
             while retries < max_retries:
                 self.send_socket.sendto(packet.concatenate(), self.peer_address)
 
-                if packet.flags == NONE:
-                    print(f"\n>>>> \nSent: {packet.seq_num}|{packet.ack_num}|{packet.message}")
+                # if packet.flags == NONE:
+                print(f"\n>>>> \nSent: {packet.seq_num}|{packet.ack_num}|{packet.message}")
                 self.successful_delivery.clear()
 
                 if packet.flags == KAL_ACK:
@@ -192,20 +191,25 @@ class Peer:
                     # print(f"Failed to deliver message message after {max_retries} attempts")
                     with self.queue_lock:
                         self.message_queue.popleft()
+
     def start_keep_alive(self):
         kal_delivery_error = 0
         delay = random.uniform(3, 10)
         time.sleep(delay)
 
         while not self.kill_communication:
+            print("\nsom tuuuuuuu")
             self.successful_kal_delivery.clear()
-            self.enqueue_messages("(kal)", KAL, push_to_front=True)
+            self.enqueue_messages("(kal)", KAL, True)
 
-            if self.successful_delivery.wait(timeout=5):
+            delivery = self.successful_kal_delivery.wait(timeout=5)
+
+            if delivery:
                 kal_delivery_error = 0
-                # print(f"✓ other peer still alive ✓ {kal_delivery_error}")
-            elif not self.successful_kal_delivery.wait(timeout=5):
+                print(f"✓ other peer still alive ✓ {kal_delivery_error}")
+            elif not delivery:
                 kal_delivery_error += 1
+                print(f"x other peer not there x {kal_delivery_error}")
 
             if kal_delivery_error == 3:
                 print(f"\n!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
@@ -343,8 +347,9 @@ if __name__ == '__main__':
     receive_thread.daemon = True
     receive_thread.start()
 
-    keep_alive_thread = threading.Thread(target=peer.start_keep_alive)
-    keep_alive_thread.daemon = True
-    keep_alive_thread.start()
+    if whos_this == "1":
+        keep_alive_thread = threading.Thread(target=peer.start_keep_alive)
+        keep_alive_thread.daemon = True
+        keep_alive_thread.start()
 
     peer.show_menu()

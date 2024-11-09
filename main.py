@@ -343,9 +343,9 @@ if __name__ == '__main__':
     receive_thread.daemon = True
     receive_thread.start()
 
-    if whos_this == "1":
-        keep_alive_thread = threading.Thread(target=peer.start_keep_alive)
-        keep_alive_thread.daemon = True
-        keep_alive_thread.start()
+    # if whos_this == "1":
+    keep_alive_thread = threading.Thread(target=peer.start_keep_alive)
+    keep_alive_thread.daemon = True
+    keep_alive_thread.start()
 
     peer.show_menu()

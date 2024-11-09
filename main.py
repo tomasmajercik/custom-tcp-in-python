@@ -2,11 +2,13 @@ import random
 import socket
 import threading
 import time
+
 import crcmod
 from collections import deque
 
 from Packet import Packet
 from Flags import Flags
+from Prints import Prints
 
 
 
@@ -20,23 +22,18 @@ class Peer:
         self.id = (my_ip, listen_port)
         self.send_port = send_port
         self.peer_address = (target_ip, self.send_port)
-
-        # Receiving socket
-        self.receiving_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.receiving_socket.bind(self.id)
-
-        # Sending socket (no need to bind, just used for sending)
-        self.send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
         self.seq_num = random.randint(0, 1000)
         self.ack_num = 0
-
+        # sockets
+        self.receiving_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.receiving_socket.bind(self.id)
+        self.send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # threading variables
         self.queue_lock = threading.Lock()
         self.message_queue = deque()
-
         self.successful_delivery = threading.Event()
         self.successful_kal_delivery = threading.Event()
-
+        #quit variables
         self.freeze_loops = False
         self.kill_communication = False
 
@@ -55,25 +52,25 @@ class Peer:
                     received_packet = Packet.deconcatenate(data)
 
                     if received_packet.flags == Flags.SYN:  # Received SYN from the other peer
-                        print(f"\nReceived handshake SYN")
+                        print(f"\n< Received handshake SYN <")
                         self.ack_num = received_packet.seq_num + 1
                         SYN_ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.SYN_ACK)
                         self.send_socket.sendto(SYN_ACK_packet.concatenate(), self.peer_address)
-                        print(f"Sent handshake SYN/ACK")
+                        print(f"> Sent handshake SYN/ACK >")
                         self.seq_num += 1
 
                     elif received_packet.flags == Flags.SYN_ACK:  # Received SYN/ACK in response to our SYN
-                        print(f"Received handshake SYN/ACK")
+                        print(f"< Received handshake SYN/ACK <")
                         self.seq_num += 1
                         ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.ACK)
                         self.send_socket.sendto(ACK_packet.concatenate(), self.peer_address)
                         self.ack_num = received_packet.seq_num + 1
-                        print(f"Sent handshake ACK")
+                        print(f"> Sent handshake ACK >")
                         print(f"\n## Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
                         return True
 
                     elif received_packet.flags == Flags.ACK:  # Received final ACK confirming the handshake
-                        print(f"Received handshake ACK")
+                        print(f"< Received handshake ACK <")
                         print(f"\n## Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
                         return True
 
@@ -82,7 +79,7 @@ class Peer:
                     if retries == 0:
                         SYN_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.SYN)
                         self.send_socket.sendto(SYN_packet.concatenate(), self.peer_address)
-                        print(f"\nSent handshake SYN (attempt {retries + 1})")
+                        print(f"\n> Sent handshake SYN (attempt {retries + 1}) >")
 
                 retries += 1
 
@@ -117,7 +114,7 @@ class Peer:
                 elif packet.flags == Flags.KAL_ACK:
                     self.successful_kal_delivery.set()
 
-                ############## Message ###############################
+                ############## Regular Message #######################
                 elif packet.seq_num == self.ack_num:
                     if packet.checksum != calc_checksum(packet.message):
                         print("! Checksum does not match !")
@@ -128,9 +125,10 @@ class Peer:
                     self.send_socket.sendto(ack_packet.concatenate(), self.peer_address)
 
                     if packet.flags != Flags.ACK:
-                        print(f"\n__________________________________________")
-                        print(f"Received << {packet.seq_num}|{packet.ack_num}|{packet.message} ")
-                        print(f"____________________________________________\n")
+                        print(f"\n\n<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+                        print(f"Received: {packet.seq_num}|{packet.ack_num}|{packet.checksum}|{packet.flags}|{packet.message}")
+                        print(f"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n")
+                        Prints.info_menu()
 
                 else:
                     print("!!Out of order packet received, ignoring!!")
@@ -154,7 +152,7 @@ class Peer:
 
             packet = self.message_queue[0]
             self.send_socket.sendto(packet.concatenate(), self.peer_address)
-            if packet.flags == Flags.NONE: print(f"\n>>>> \nSent: {packet.seq_num}|{packet.ack_num}|{packet.message}")
+            if packet.flags == Flags.NONE: print(f"\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> \nSent: {packet.seq_num}|{packet.ack_num}|{packet.checksum}|{packet.flags}|{packet.message}")
             if packet.flags != Flags.NONE:
                 with self.queue_lock:
                     self.message_queue.popleft()  # Remove the message from the queue
@@ -166,7 +164,7 @@ class Peer:
             if self.successful_delivery.wait(timeout=5): # or self.successful_kal_delivery.wait(timeout=5):
                 if packet.flags == Flags.NONE:
                     self.seq_num += len(packet.message)  # Update seq_num on success
-                    print("<<<<")
+                    print("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
                 with self.queue_lock:
                     self.message_queue.popleft()  # Remove the sended message from the queue
             else:
@@ -209,7 +207,7 @@ class Peer:
                 self.kill_communication = True
                 return
 
-            time.sleep(4) #for 5 seconds, do nothing
+            time.sleep(4) #for 4 seconds, do nothing
 
         return
 
@@ -268,23 +266,17 @@ class Peer:
                 # self.ack_num += 1  # after succesfull handshake, "I am waiting for this package"
                 return True
 
-
-
     def show_menu(self):
         while True:
-            print("\nMENU:")
-            #print("'m' for message | 'f' for file | 'sml' for simulate message lost | '!quit' for quit")
-            print("'m' for message | 'f' for file | '!q / !quit' for quit")
-            choice = input("Choose an option: ").strip()
+            choice = Prints.menu()
             if self.kill_communication:
                 return
 
             if choice == 'm':
+                print("##############################")
                 message = input("Enter message: ").strip()
+                print("##############################")
                 self.enqueue_messages(message, Flags.NONE)
-            # elif choice == 'sml':
-            #     message = input("Enter message: ").strip()
-            #     self.send_message(message, True)
             elif choice == 'f':
                 print("not ready yet")
             elif choice == '!q' or '!quit':
@@ -325,7 +317,7 @@ if __name__ == '__main__':
         print("Failed to establish connection exiting.")
         exit()
     else:
-        print(f"#Starting data exchange\n")
+        print(f"#  Starting data exchange\n")
 
     send_thread = threading.Thread(target=peer.send_from_queue)
     send_thread.daemon = True #?

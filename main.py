@@ -3,6 +3,7 @@ import socket
 import threading
 import time
 from collections import deque
+#crcmod
 
 from Packet import Packet
 
@@ -156,41 +157,37 @@ class Peer:
             if not self.message_queue:
                 continue
 
-            # with self.queue_lock:
-            packet = self.message_queue[0] # get the first element in the queue
-
-            retries = 0
-            max_retries = 5
-
-            while retries < max_retries:
-                self.send_socket.sendto(packet.concatenate(), self.peer_address)
-
-                # if packet.flags == NONE:
-                print(f"\n>>>> \nSent: {packet.seq_num}|{packet.ack_num}|{packet.message}")
-                self.successful_delivery.clear()
-
-                if packet.flags == KAL_ACK:
-                    self.successful_delivery.set()
+            packet = self.message_queue[0]
+            self.send_socket.sendto(packet.concatenate(), self.peer_address)
+            if packet.flags == NONE: print(f"\n>>>> \nSent: {packet.seq_num}|{packet.ack_num}|{packet.message}")
+            if packet.flags != NONE:
+                with self.queue_lock:
+                    self.message_queue.popleft()  # Remove the message from the queue
+                    continue
 
 
-                if self.successful_delivery.wait(timeout=5): # or self.successful_kal_delivery.wait(timeout=5):
-                    if packet.flags == NONE:
-                        self.seq_num += len(packet.message)  # Update seq_num on success
-                        print("<<<<")
-                    with self.queue_lock:
-                        self.message_queue.popleft()  # Remove the sended message from the queue
-                    break
-                else:
-                    if packet.flags == KAL:
-                        self.successful_delivery.clear()
-                    else:
-                        print(f"Retrying message '{packet.message}'... (Attempt {retries + 1})")
+            self.successful_delivery.clear() #?
+
+            if self.successful_delivery.wait(timeout=5): # or self.successful_kal_delivery.wait(timeout=5):
+                if packet.flags == NONE:
+                    self.seq_num += len(packet.message)  # Update seq_num on success
+                    print("<<<<")
+                with self.queue_lock:
+                    self.message_queue.popleft()  # Remove the sended message from the queue
+            else:
+                # Retry up to max_retries if no acknowledgment is received
+                retries = 0
+                max_retries = 5
+                while retries < max_retries and not self.successful_delivery.is_set():
+                    print(f"Retrying message '{packet.message}'... (Attempt {retries + 1})")
+                    self.send_socket.sendto(packet.concatenate(), self.peer_address)
                     retries += 1
 
-                if retries == max_retries:
-                    # print(f"Failed to deliver message message after {max_retries} attempts")
-                    with self.queue_lock:
-                        self.message_queue.popleft()
+                    # Remove packet after maximum retries without acknowledgment
+                    if retries == max_retries:
+                        with self.queue_lock:
+                            self.message_queue.popleft()
+                        print(f"Failed to deliver message '{packet.message}' after {max_retries} attempts")
 
     def start_keep_alive(self):
         kal_delivery_error = 0
@@ -198,18 +195,17 @@ class Peer:
         time.sleep(delay)
 
         while not self.kill_communication:
-            print("\nsom tuuuuuuu")
             self.successful_kal_delivery.clear()
             self.enqueue_messages("(kal)", KAL, True)
 
-            delivery = self.successful_kal_delivery.wait(timeout=5)
+            delivery = self.successful_kal_delivery.wait(timeout=3)
 
             if delivery:
                 kal_delivery_error = 0
-                print(f"✓ other peer still alive ✓ {kal_delivery_error}")
+                # print(f"✓ other peer still alive ✓ {kal_delivery_error}")
             elif not delivery:
                 kal_delivery_error += 1
-                print(f"x other peer not there x {kal_delivery_error}")
+                print(f"X Didn't receive KAL/ACK from other peer. (other peer disconnected?) X")
 
             if kal_delivery_error == 3:
                 print(f"\n!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
@@ -218,7 +214,7 @@ class Peer:
                 self.kill_communication = True
                 return
 
-            time.sleep(5) #for 5 seconds, do nothing
+            time.sleep(4) #for 5 seconds, do nothing
 
         return
 

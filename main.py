@@ -2,8 +2,8 @@ import random
 import socket
 import threading
 import time
+import crcmod
 from collections import deque
-#crcmod
 
 from Packet import Packet
 
@@ -22,6 +22,12 @@ KAL_ACK = 0b1011
 
 TER = 0b1100
 TER_ACK = 0b1110
+
+
+def calc_checksum(message):
+    crc16_func = crcmod.mkCrcFun(0x11021, initCrc=0xFFFF, xorOut=0x0000) #0x11021: This is the CRC-16-CCITT polynomial; initCrc=0xFFFF: This initializes the CRC register; xorOut=0x0000: This value is XORed with the final CRC value to complete the checksum.
+    checksum = crc16_func(message.encode('utf-8'))
+    return checksum
 
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
@@ -106,28 +112,31 @@ class Peer:
             try:
                 data, addr = self.receiving_socket.recvfrom(1024)
                 packet = Packet.deconcatenate(data)
-
+                ############## TER ###################################
                 if packet.flags == TER:
                     print(f"\n\n #Another peer terminates the connection!")
-                    print(f"1. RECEIVED termination TER: {packet.concatenate()}")
+                    print(f"1. RECEIVED termination TER")
                     self.freeze_loops = True
                     if self.answer_terminate_connection():
                         self.receiving_socket.close()
                         self.kill_communication = True
                     return
-
+                ############## ACK ###################################
                 elif packet.flags == ACK:
                     self.successful_delivery.set()
-
+                ############## KAL ###################################
                 elif packet.flags == KAL:
                     self.enqueue_messages("KAL/ACK", KAL_ACK, True)
-                    # time.sleep(0.1)
                     self.successful_delivery.set()
                 elif packet.flags == KAL_ACK:
                     self.successful_kal_delivery.set()
 
-
+                ############## Message ###############################
                 elif packet.seq_num == self.ack_num:
+                    if packet.checksum != calc_checksum(packet.message):
+                        print("! Checksum does not match !")
+                        continue
+
                     self.ack_num += len(packet.message)  # add length of message to my ack_num
                     ack_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=ACK)
                     self.send_socket.sendto(ack_packet.concatenate(), self.peer_address)
@@ -140,14 +149,14 @@ class Peer:
                 else:
                     print("!!Out of order packet received, ignoring!!")
                     # Send an acknowledgment for the last valid packet
-                    # ask for lost package
+                    # ask for lost package?
 
             except socket.timeout:
                 continue
 
     def enqueue_messages(self, message, flags_to_send, push_to_front=False):
         with self.queue_lock:
-            packet = Packet(message, seq_num=self.seq_num, ack_num=self.ack_num, flags=flags_to_send)
+            packet = Packet(message, seq_num=self.seq_num, ack_num=self.ack_num, checksum=calc_checksum(message), flags=flags_to_send)
             if push_to_front:
                 self.message_queue.appendleft(packet)
             else:
@@ -229,7 +238,7 @@ class Peer:
                 # send TER
                 TER_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=TER)  # SYN
                 self.send_socket.sendto(TER_packet.concatenate(), self.peer_address)
-                print(f"\n1. SENT termination: {TER_packet.concatenate()} (attempt {retries + 1})")
+                print(f"\n1. SENT termination (attempt {retries + 1})")
                 retries += 1
 
                 # Expect TER/ACK
@@ -239,13 +248,13 @@ class Peer:
                 TER_ACK_packet = Packet.deconcatenate(data)
 
                 if TER_ACK_packet.flags == TER_ACK:  # if TER/ACK received
-                    print(f"2. RECEIVED termination TER/ACK: {TER_ACK_packet.concatenate()}")
+                    print(f"2. RECEIVED termination TER/ACK")
                     self.seq_num += 1  # sent one phantom byte
                     self.ack_num = TER_ACK_packet.seq_num + 1  # Update ACK number to one more than received seq num
                     ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=ACK)  # ACK
 
                     self.send_socket.sendto(ACK_packet.concatenate(), self.peer_address)
-                    print(f"3. SENT termination ACK: {ACK_packet.concatenate()}")
+                    print(f"3. SENT termination ACK")
                     self.seq_num += 1  # after succesfull handshake, "I am waiting for this package"
 
                     self.receiving_socket.close()
@@ -260,14 +269,14 @@ class Peer:
     def answer_terminate_connection(self):
         TER_ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=TER_ACK)  # send SYN-ACK
         self.send_socket.sendto(TER_ACK_packet.concatenate(), self.peer_address)
-        print(f"2. Sent termination TER/ACK: {TER_ACK_packet.concatenate()}")
+        print(f"2. Sent termination TER/ACK")
 
         while True:
             data, addr = self.receiving_socket.recvfrom(1024)  # recieve ACK
             ACK_packet = Packet.deconcatenate(data)
 
             if ACK_packet.flags == ACK:  # if ACK received
-                print(f"3. Received termination ACK: {ACK_packet.concatenate()}")
+                print(f"3. Received termination ACK")
                 print(f"\n##Termination successful, connection ended")
                 self.kill_communication = True
                 # self.ack_num += 1  # after succesfull handshake, "I am waiting for this package"
@@ -343,9 +352,9 @@ if __name__ == '__main__':
     receive_thread.daemon = True
     receive_thread.start()
 
-    if whos_this == "1":
-        keep_alive_thread = threading.Thread(target=peer.start_keep_alive)
-        keep_alive_thread.daemon = True
-        keep_alive_thread.start()
+    # if whos_this == "1":
+    keep_alive_thread = threading.Thread(target=peer.start_keep_alive)
+    keep_alive_thread.daemon = True
+    keep_alive_thread.start()
 
     peer.show_menu()

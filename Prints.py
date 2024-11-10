@@ -85,4 +85,3 @@ class Prints:
         print("\n")
         print_send(output_to_string)
         print(output_to_string)
-        print(f"\n")

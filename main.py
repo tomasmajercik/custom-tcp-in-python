@@ -226,14 +226,17 @@ class Peer:
         delay = random.uniform(3, 10)
         time.sleep(delay)
 
-        while not self.kill_communication:
+        while not self.freeze_loops:
             self.successful_kal_delivery.clear()
             self.enqueue_messages("", Flags.KAL, True)
 
             delivery = self.successful_kal_delivery.wait(timeout=3)
 
             if delivery:
+                if kal_delivery_error > 0:
+                    print("✓ Peer is back online, communication continues ✓")
                 kal_delivery_error = 0
+
                 # print(f"✓ other peer still alive ✓ {kal_delivery_error}")
             elif not delivery:
                 kal_delivery_error += 1

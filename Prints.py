@@ -1,12 +1,25 @@
 import time
+
+def calc_print_len(string):
+    return len(string)
+def print_receive(count):
+    for _ in count:
+        print("<", end='')
+    print()
+def print_send(count):
+    for _ in count:
+        print(">", end='')
+    print()
+
 class Prints:
+
 
     @staticmethod
     def menu():
         time.sleep(0.1)
         print("\nMENU:")
         # print("'m' for message | 'f' for file | 'sml' for simulate message lost | '!quit' for quit")
-        print("'m' for message | 'f' for file | '!q / !quit' for quit")
+        print("'m' for message | 'f' for file | 'cfl' for info or change fragmentation size | '!q / !quit' for quit")
         choice = input("Choose an option: ").strip()
         return choice
 
@@ -14,7 +27,7 @@ class Prints:
     def info_menu():
         print("MENU:")
         # print("'m' for message | 'f' for file | 'sml' for simulate message lost | '!quit' for quit")
-        print("'m' for message | 'f' for file | '!q / !quit' for quit")
+        print("'m' for message | 'f' for file | 'cfl' for info or change fragmentation size | '!q / !quit' for quit")
 
     @staticmethod
     def start_termination():
@@ -31,27 +44,45 @@ class Prints:
 
     @staticmethod
     def received_fragmented_package(packet, last=False):
-        print(f"\n\n<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+        output_to_string = (f"Received fragment: {packet.seq_num}|{packet.ack_num}|{packet.identification}|"
+                            f"{packet.checksum}|{packet.flags}|{packet.message}")
+        print(f"\n\n<")
+
         if not last:
-            print(f"Received fragment: {packet.seq_num}|{packet.ack_num}|{packet.identification}|{packet.checksum}|{packet.flags}|{packet.message}")
+            print_receive(output_to_string)
+            print(output_to_string)
+            print_receive(output_to_string)
         if last:
+            print_receive(output_to_string + "    ")
             print(
                 f"Received last fragment: {packet.seq_num}|{packet.ack_num}|{packet.identification}|{packet.checksum}|{packet.flags}|{packet.message}")
-        print(f"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n")
+            print_receive(output_to_string + "    ")
+
+        print("\n")
 
     @staticmethod
-    def received_joined_fragments(data):
-        print(f"\n\n<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
-        print(f"Received: {data}")
-        print(f"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n")
+    def received_joined_fragments(data, num):
+        output_to_string = f"Received: {data} (message was received as {num} fragments)"
+
+        print(f"\n\n")
+        print_receive(output_to_string)
+        print(output_to_string)
+        print_receive(output_to_string)
+        print("\n")
 
     @staticmethod
     def received_package(packet):
-        print(f"\n\n<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
-        print(f"Received: {packet.seq_num}|{packet.ack_num}|{packet.checksum}|{packet.flags}|{packet.message}")
-        print(f"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n")
+        output_to_string = f"Received: {packet.seq_num}|{packet.ack_num}|{packet.checksum}|{packet.flags}|{packet.message}"
+        print(f"\n\n")
+        print_receive(output_to_string)
+        print(output_to_string)
+        print_receive(output_to_string)
+        print(f"\n")
 
     @staticmethod
     def send_packet(packet):
-        print(f"\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> \n"
-              f"Sent: {packet.seq_num}|{packet.ack_num}|{packet.checksum}|{packet.flags}|{packet.message}")
+        output_to_string = f"Sent: {packet.seq_num}|{packet.ack_num}|{packet.checksum}|{packet.flags}|{packet.message}"
+        print("\n")
+        print_send(output_to_string)
+        print(output_to_string)
+        print(f"\n")

@@ -32,7 +32,7 @@ def rebuild_fragments(fragments):
 
         full_message += fragment.message
         expeted_id += 1
-    return full_message
+    return full_message, expeted_id
 
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
@@ -108,6 +108,7 @@ class Peer:
         return False
 
     def receive_messages(self):
+        global FRAGMENT_SIZE
         fragments = []
         while not self.freeze_loops:
             try:
@@ -135,10 +136,16 @@ class Peer:
                     fragments.append(packet)
                 elif packet.flags == Flags.FRP_ACK:
                     fragments.append(packet)
-                    Prints.received_joined_fragments(rebuild_fragments(fragments))
+                    message, number_of_fragments = rebuild_fragments(fragments)
+                    Prints.received_joined_fragments(message, number_of_fragments)
                     fragments = []
-
-
+                ############## CFL ###################################
+                elif packet.flags == Flags.CFL:
+                    old_limit = FRAGMENT_SIZE
+                    FRAGMENT_SIZE = int(packet.message)
+                    print("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+                    print(f"Other peer has just changed fragmentation limit from {old_limit} to {FRAGMENT_SIZE}")
+                    print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
                 ############## Regular Message #######################
                 elif packet.seq_num == self.ack_num:
                     if packet.checksum != calc_checksum(packet.message):
@@ -309,19 +316,31 @@ class Peer:
                 return True
 
     def show_menu(self):
+        global FRAGMENT_SIZE
         while True:
             choice = Prints.menu()
             if self.kill_communication:
                 return
 
             if choice == 'm':
-                print("##############################")
+                print("##############")
                 message = input("Enter message: ").strip()
-                print("##############################")
+                print("##############")
                 self.enqueue_messages(message, Flags.NONE)
+            elif choice == "cfl":
+                print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+                print(f"Fragment size is currently set to {FRAGMENT_SIZE}")
+                new_limit = input("Enter q for quit or enter new fragment limit: ").strip()
+                if new_limit == 'q':
+                    print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+                    continue
+                print(f"Changed fragmentation limit from {FRAGMENT_SIZE} to {new_limit}")
+                FRAGMENT_SIZE = int(new_limit)
+                self.enqueue_messages(new_limit, Flags.CFL, True)
+                print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
             elif choice == 'f':
                 print("not ready yet")
-            elif choice == '!q' or '!quit':
+            elif choice == '!q' or choice == '!quit':
                 self.freeze_loops = True
                 self.start_terminate_connection()
                 break

@@ -11,11 +11,28 @@ from Flags import Flags
 from Prints import Prints
 
 
+FRAGMENT_SIZE = 2
 
 def calc_checksum(message):
     crc16_func = crcmod.mkCrcFun(0x11021, initCrc=0xFFFF, xorOut=0x0000) #0x11021: This is the CRC-16-CCITT polynomial; initCrc=0xFFFF: This initializes the CRC register; xorOut=0x0000: This value is XORed with the final CRC value to complete the checksum.
     checksum = crc16_func(message.encode('utf-8'))
     return checksum
+
+def rebuild_fragments(fragments):
+    full_message = ""
+    expeted_id = fragments[0].identification
+
+    for fragment in fragments:
+        if fragment.checksum != calc_checksum(fragment.message):
+            print("Error: Checksum mismatch in fragment.")
+            return None
+
+        if fragment.identification != expeted_id:
+            print("Error: Identification mismatch in fragment.")
+
+        full_message += fragment.message
+        expeted_id += 1
+    return full_message
 
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
@@ -91,6 +108,7 @@ class Peer:
         return False
 
     def receive_messages(self):
+        fragments = []
         while not self.freeze_loops:
             try:
                 data, addr = self.receiving_socket.recvfrom(1024)
@@ -108,10 +126,18 @@ class Peer:
                     self.successful_delivery.set()
                 ############## KAL ###################################
                 elif packet.flags == Flags.KAL:
-                    self.enqueue_messages("KAL/ACK", Flags.KAL_ACK, True)
+                    self.enqueue_messages("", Flags.KAL_ACK, True)
                     self.successful_delivery.set()
                 elif packet.flags == Flags.KAL_ACK:
                     self.successful_kal_delivery.set()
+                ############## FRAGMENTED Message #####################
+                elif packet.flags == Flags.FRP:
+                    fragments.append(packet)
+                elif packet.flags == Flags.FRP_ACK:
+                    fragments.append(packet)
+                    Prints.received_joined_fragments(rebuild_fragments(fragments))
+                    fragments = []
+
 
                 ############## Regular Message #######################
                 elif packet.seq_num == self.ack_num:
@@ -133,20 +159,38 @@ class Peer:
             except socket.timeout:
                 continue
 
-    def enqueue_messages(self, message, flags_to_send, push_to_front=False):
-        with self.queue_lock:
-            packet = Packet(message, seq_num=self.seq_num, ack_num=self.ack_num, checksum=calc_checksum(message), flags=flags_to_send)
+    def enqueue_messages(self, data, flags_to_send, push_to_front=False):
+        # if message is smaller than fragment limit, push it to the queue immediately without fragment
+        if len(data) <= FRAGMENT_SIZE:
+            packet = Packet(data, seq_num=self.seq_num, ack_num=self.ack_num, checksum=calc_checksum(data), flags=flags_to_send)
             if push_to_front:
                 self.message_queue.appendleft(packet)
             else:
                 self.message_queue.append(packet)
+        else: # split data to be sent into multiple fragments if needed
+            fragments = [data[i:i + FRAGMENT_SIZE] for i in range(0, len(data), FRAGMENT_SIZE)]
+            with self.queue_lock:
+                for i, fragment in enumerate(fragments):
+                    if i == len(fragments) - 1: #if it is last fragment, mark it with FRP/ACK
+                        fragment_flag = Flags.FRP_ACK
+                    else:
+                        fragment_flag = Flags.FRP
+
+                    packet = Packet(fragment, seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                                    checksum=calc_checksum(fragment), flags=fragment_flag)
+
+                    self.message_queue.append(packet)
+
+
     def send_from_queue(self):
         while not self.freeze_loops:
             if not self.message_queue:
                 continue
 
             packet = self.message_queue[0]
+            packet.seq_num = self.seq_num
             self.send_socket.sendto(packet.concatenate(), self.peer_address)
+
             if packet.flags == Flags.NONE:
                 Prints.send_packet(packet)
             if packet.flags != Flags.NONE:
@@ -184,7 +228,7 @@ class Peer:
 
         while not self.kill_communication:
             self.successful_kal_delivery.clear()
-            self.enqueue_messages("(kal)", Flags.KAL, True)
+            self.enqueue_messages("", Flags.KAL, True)
 
             delivery = self.successful_kal_delivery.wait(timeout=3)
 
@@ -215,7 +259,7 @@ class Peer:
         while retries < max_retries:
             try:
                 # send TER
-                TER_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.TER)  # SYN
+                TER_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.TER) # SYN
                 self.send_socket.sendto(TER_packet.concatenate(), self.peer_address)
                 print(f"\n1. SENT termination (attempt {retries + 1})")
                 retries += 1

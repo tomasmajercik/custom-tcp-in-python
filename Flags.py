@@ -8,6 +8,8 @@ class Flags:
 
     CFL = 0b0100
     FRP = 0b1000
+    FRP_ACK = 0b1010
+
     KAL = 0b1001
     KAL_ACK = 0b1011
 

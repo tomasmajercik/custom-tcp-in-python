@@ -30,6 +30,22 @@ class Prints:
         print("!!Out of order packet received, ignoring!!")
 
     @staticmethod
+    def received_fragmented_package(packet, last=False):
+        print(f"\n\n<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+        if not last:
+            print(f"Received fragment: {packet.seq_num}|{packet.ack_num}|{packet.identification}|{packet.checksum}|{packet.flags}|{packet.message}")
+        if last:
+            print(
+                f"Received last fragment: {packet.seq_num}|{packet.ack_num}|{packet.identification}|{packet.checksum}|{packet.flags}|{packet.message}")
+        print(f"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n")
+
+    @staticmethod
+    def received_joined_fragments(data):
+        print(f"\n\n<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+        print(f"Received: {data}")
+        print(f"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n")
+
+    @staticmethod
     def received_package(packet):
         print(f"\n\n<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
         print(f"Received: {packet.seq_num}|{packet.ack_num}|{packet.checksum}|{packet.flags}|{packet.message}")

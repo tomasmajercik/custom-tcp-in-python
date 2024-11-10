@@ -97,8 +97,7 @@ class Peer:
                 packet = Packet.deconcatenate(data)
                 ############## TER ###################################
                 if packet.flags == Flags.TER:
-                    print(f"\n\n #Another peer terminates the connection!")
-                    print(f"1. RECEIVED termination TER")
+                    Prints.start_termination()
                     self.freeze_loops = True
                     if self.answer_terminate_connection():
                         self.receiving_socket.close()
@@ -117,7 +116,7 @@ class Peer:
                 ############## Regular Message #######################
                 elif packet.seq_num == self.ack_num:
                     if packet.checksum != calc_checksum(packet.message):
-                        print("! Checksum does not match !")
+                        Prints.checksum_err()
                         continue
 
                     self.ack_num += len(packet.message)  # add length of message to my ack_num
@@ -125,15 +124,11 @@ class Peer:
                     self.send_socket.sendto(ack_packet.concatenate(), self.peer_address)
 
                     if packet.flags != Flags.ACK:
-                        print(f"\n\n<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
-                        print(f"Received: {packet.seq_num}|{packet.ack_num}|{packet.checksum}|{packet.flags}|{packet.message}")
-                        print(f"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n")
+                        Prints.received_package(packet)
                         Prints.info_menu()
 
                 else:
-                    print("!!Out of order packet received, ignoring!!")
-                    # Send an acknowledgment for the last valid packet
-                    # ask for lost package?
+                    Prints.out_of_order_err()
 
             except socket.timeout:
                 continue
@@ -152,12 +147,12 @@ class Peer:
 
             packet = self.message_queue[0]
             self.send_socket.sendto(packet.concatenate(), self.peer_address)
-            if packet.flags == Flags.NONE: print(f"\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> \nSent: {packet.seq_num}|{packet.ack_num}|{packet.checksum}|{packet.flags}|{packet.message}")
+            if packet.flags == Flags.NONE:
+                Prints.send_packet(packet)
             if packet.flags != Flags.NONE:
                 with self.queue_lock:
                     self.message_queue.popleft()  # Remove the message from the queue
                     continue
-
 
             self.successful_delivery.clear() #?
 

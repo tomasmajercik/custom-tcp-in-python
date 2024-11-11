@@ -121,46 +121,12 @@ class Peer:
         self.receiving_socket.close()
         return False
 
-    # def receive_file(self, metadata_packet):
-    #     # Parse metadata (filename, size, fragment count)
-    #     file_name, file_size, num_fragments = metadata_packet.message.split(":")
-    #     num_fragments = int(num_fragments)
-    #
-    #     received_fragments = []
-    #     while len(received_fragments) < num_fragments:
-    #         try:
-    #             data, addr = self.receiving_socket.recvfrom(1024)
-    #             packet = Packet.deconcatenate(data)
-    #
-    #             if packet.flags == Flags.FILE or packet.flags == Flags.LAST_FILE:
-    #                 received_fragments.append(packet.message)
-    #
-    #                 # Send acknowledgment for received fragment
-    #                 ack_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.ACK)
-    #                 self.send_socket.sendto(ack_packet.concatenate(), self.peer_address)
-    #
-    #                 if packet.flags == Flags.LAST_FILE:  # Final fragment in file transfer
-    #                     break
-    #
-    #         except socket.timeout:
-    #             print("Timeout while receiving file fragments.")
-    #             continue
-    #
-    #     # Combine received fragments and write to file
-    #     with open(f"received_{file_name}", "wb") as f:
-    #         for fragment in received_fragments:
-    #             f.write(fragment.encode('latin1'))
-    #
-    #     print(f"File '{file_name}' received and saved as 'received_{file_name}'")
-    #
-    #     return
-
     def merge_file_fragments(self, fragments, file_metadata):
 
         print("All data received - press ENTER to proceed")
-        save_path = input("Enter desired path to save file: ")
+        # save_path = input("Enter desired path to save file: ")
 
-        # save_path = "/home/tomasmajercik/Desktop/peer2/"
+        save_path = "/home/tomasmajercik/Desktop/peer2/"
         merged_file = b''
         for fragment in fragments:
             # Check if the fragment's message is in bytes or string, and handle accordingly
@@ -203,6 +169,7 @@ class Peer:
                     self.successful_delivery.set()
                 ############## KAL ###################################
                 elif packet.flags == Flags.KAL:
+                    # print("RECEIVED KALLLLL")
                     self.enqueue_messages("", Flags.KAL_ACK, True)
                     self.successful_delivery.set()
                 elif packet.flags == Flags.KAL_ACK:
@@ -336,13 +303,18 @@ class Peer:
             packet.seq_num = self.seq_num
             self.send_socket.sendto(packet.concatenate(), self.peer_address)
 
-            if not packet.flags == Flags.KAL and not packet.flags == Flags.KAL_ACK:
-                print(f"{packet.seq_num}|data")
+            if packet.flags == Flags.KAL:
+                print(f"POSLAL SOM KAL")
+            if packet.flags == Flags.KAL_ACK:
+                print("POSLAL SOM KAL_ACK")
 
 
             if packet.flags in {Flags.NONE, Flags.F_INFO}:
                 Prints.send_packet(packet)
-            if packet.flags not in {Flags.NONE, Flags.F_INFO, Flags.FILE, Flags.LAST_FILE, Flags.FRP, Flags.FRP_ACK}: # those flags we need to wait for ack
+
+
+            # if packet.flags not in {Flags.NONE, Flags.F_INFO, Flags.FILE, Flags.LAST_FILE, Flags.FRP, Flags.FRP_ACK}: # those flags we need to wait for ack
+            if packet.flags in {Flags.TER, Flags.TER_ACK, Flags.ACK, Flags.KAL, Flags.KAL_ACK}: # those which do not need ack
                 with self.queue_lock:
                     self.message_queue.popleft()  # Remove the message from the queue
                     continue
@@ -403,6 +375,7 @@ class Peer:
                 self.kill_communication = True
                 return
 
+            self.successful_kal_delivery.clear()
             time.sleep(4) #for 4 seconds, do nothing
 
         return

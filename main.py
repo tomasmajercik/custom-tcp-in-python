@@ -1,14 +1,13 @@
 import random
 import socket
 import threading
-import time
-
 import crcmod
 from collections import deque
 
+import Prints
 from Packet import Packet
 from Flags import Flags
-from Prints import Prints
+from Prints import *
 
 
 FRAGMENT_SIZE = 2
@@ -33,6 +32,7 @@ def rebuild_fragments(fragments):
         full_message += fragment.message
         expeted_id += 1
     return full_message, expeted_id
+
 
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
@@ -199,7 +199,7 @@ class Peer:
             self.send_socket.sendto(packet.concatenate(), self.peer_address)
 
             if packet.flags == Flags.NONE:
-                Prints.send_packet(packet)
+                print_size = Prints.send_packet(packet)
             if packet.flags != Flags.NONE:
                 with self.queue_lock:
                     self.message_queue.popleft()  # Remove the message from the queue
@@ -210,7 +210,8 @@ class Peer:
             if self.successful_delivery.wait(timeout=5): # or self.successful_kal_delivery.wait(timeout=5):
                 if packet.flags == Flags.NONE:
                     self.seq_num += len(packet.message)  # Update seq_num on success
-                    print("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+                    if packet.flags == Flags.NONE:
+                        Prints.print_send(print_size)
                 with self.queue_lock:
                     self.message_queue.popleft()  # Remove the sended message from the queue
             else:
@@ -388,7 +389,7 @@ if __name__ == '__main__':
     receive_thread.daemon = True
     receive_thread.start()
 
-    # if whos_this == "1":
+    # if who's_this == "1":
     keep_alive_thread = threading.Thread(target=peer.start_keep_alive)
     keep_alive_thread.daemon = True
     keep_alive_thread.start()

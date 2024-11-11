@@ -150,6 +150,7 @@ class Peer:
         global FRAGMENT_SIZE
         fragments = []
         file_to_receive_metadata = ""
+        fragment_count_to_receive = 100
 
         while not self.freeze_loops:
             try:
@@ -199,9 +200,10 @@ class Peer:
                     file_to_receive_metadata = packet.message
                     print(f"\n< Received file transfer request for '{file_to_receive_metadata}' >")
                     Prints.print_receive_file()
+                    fragment_count_to_receive = packet.message.split(":")[2]
                 elif packet.flags == Flags.FILE:
                     fragments.append(packet)
-                    # print(f"rec {packet.identification}")
+                    print(f"Received fragment - completed {(packet.identification * 100 / int(fragment_count_to_receive)):.2f}%")
                     self.send_ack(packet)
                 elif packet.flags == Flags.LAST_FILE:
                     fragments.append(packet)
@@ -292,6 +294,7 @@ class Peer:
 
 
     def send_from_queue(self):
+        fragment_count_to_send = 100
         while not self.freeze_loops:
             if not self.message_queue:
                 continue
@@ -302,14 +305,16 @@ class Peer:
             packet.seq_num = self.seq_num
             self.send_socket.sendto(packet.concatenate(), self.peer_address)
 
-            if packet.flags == Flags.KAL:
-                print(f"POSLAL SOM KAL")
-            if packet.flags == Flags.KAL_ACK:
-                print("POSLAL SOM KAL_ACK")
+            # if packet.flags == Flags.KAL:
+            #     print(f"POSLAL SOM KAL")
+            # if packet.flags == Flags.KAL_ACK:
+            #     print("POSLAL SOM KAL_ACK")
 
 
             if packet.flags in {Flags.NONE, Flags.F_INFO}:
                 Prints.send_packet(packet)
+                if packet.flags == Flags.F_INFO:
+                    fragment_count_to_send = packet.message.split(":")[2]
 
 
             # if packet.flags not in {Flags.NONE, Flags.F_INFO, Flags.FILE, Flags.LAST_FILE, Flags.FRP, Flags.FRP_ACK}: # those flags we need to wait for ack
@@ -322,9 +327,13 @@ class Peer:
 
             if self.successful_delivery.wait(timeout=5):
                 self.seq_num += len(packet.message)  # Update seq_num on success
-                # if packet.flags == Flags.NONE:
+                if packet.flags == Flags.NONE:
                     # Prints.print_send(print_size)
-                print("<<<<")
+                    print("<<<<")
+                if packet.flags == Flags.FILE:
+                    print(f"Sent fragment - completed {(packet.identification * 100 / int(fragment_count_to_send)):.2f}%")
+                if packet.flags == Flags.LAST_FILE:
+                    print("Sent last fragment - 100% complete")
                 with self.queue_lock:
                     self.message_queue.popleft()  # Remove the sended message from the queue
             else:

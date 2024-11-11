@@ -1,6 +1,8 @@
+import os
 import random
 import socket
 import threading
+
 import crcmod
 from collections import deque
 
@@ -10,11 +12,11 @@ from Flags import Flags
 from Prints import *
 
 
-FRAGMENT_SIZE = 2
+FRAGMENT_SIZE = 100
 
 def calc_checksum(message):
     crc16_func = crcmod.mkCrcFun(0x11021, initCrc=0xFFFF, xorOut=0x0000) #0x11021: This is the CRC-16-CCITT polynomial; initCrc=0xFFFF: This initializes the CRC register; xorOut=0x0000: This value is XORed with the final CRC value to complete the checksum.
-    checksum = crc16_func(message.encode('utf-8'))
+    checksum = crc16_func(message)
     return checksum
 
 def rebuild_fragments(fragments):
@@ -22,7 +24,7 @@ def rebuild_fragments(fragments):
     expeted_id = fragments[0].identification
 
     for fragment in fragments:
-        if fragment.checksum != calc_checksum(fragment.message):
+        if fragment.checksum != calc_checksum(fragment.message.encode()):
             print("Error: Checksum mismatch in fragment.")
             return None
 
@@ -32,6 +34,9 @@ def rebuild_fragments(fragments):
         full_message += fragment.message
         expeted_id += 1
     return full_message, expeted_id
+
+
+
 
 
 class Peer:
@@ -50,9 +55,18 @@ class Peer:
         self.message_queue = deque()
         self.successful_delivery = threading.Event()
         self.successful_kal_delivery = threading.Event()
+        self.fragments_sending = threading.Event()
+        self.is_sending_data = threading.Event()
+        self.is_receiving_data = threading.Event()
         #quit variables
         self.freeze_loops = False
         self.kill_communication = False
+
+    def send_ack(self, packet):
+        self.ack_num += len(packet.message)  # add length of message to my ack_num
+        ack_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.ACK)
+        self.send_socket.sendto(ack_packet.concatenate(), self.peer_address)
+
 
     def handshake(self):
         retry_interval = 2
@@ -107,12 +121,74 @@ class Peer:
         self.receiving_socket.close()
         return False
 
+    # def receive_file(self, metadata_packet):
+    #     # Parse metadata (filename, size, fragment count)
+    #     file_name, file_size, num_fragments = metadata_packet.message.split(":")
+    #     num_fragments = int(num_fragments)
+    #
+    #     received_fragments = []
+    #     while len(received_fragments) < num_fragments:
+    #         try:
+    #             data, addr = self.receiving_socket.recvfrom(1024)
+    #             packet = Packet.deconcatenate(data)
+    #
+    #             if packet.flags == Flags.FILE or packet.flags == Flags.LAST_FILE:
+    #                 received_fragments.append(packet.message)
+    #
+    #                 # Send acknowledgment for received fragment
+    #                 ack_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.ACK)
+    #                 self.send_socket.sendto(ack_packet.concatenate(), self.peer_address)
+    #
+    #                 if packet.flags == Flags.LAST_FILE:  # Final fragment in file transfer
+    #                     break
+    #
+    #         except socket.timeout:
+    #             print("Timeout while receiving file fragments.")
+    #             continue
+    #
+    #     # Combine received fragments and write to file
+    #     with open(f"received_{file_name}", "wb") as f:
+    #         for fragment in received_fragments:
+    #             f.write(fragment.encode('latin1'))
+    #
+    #     print(f"File '{file_name}' received and saved as 'received_{file_name}'")
+    #
+    #     return
+
+    def merge_file_fragments(self, fragments, file_metadata):
+
+        print("All data received - press ENTER to proceed")
+        save_path = input("Enter desired path to save file: ")
+
+        # save_path = "/home/tomasmajercik/Desktop/peer2/"
+        merged_file = b''
+        for fragment in fragments:
+            # Check if the fragment's message is in bytes or string, and handle accordingly
+            if isinstance(fragment.message, str):
+                merged_file += fragment.message.encode('utf-8')  # Encode string to bytes
+            else:
+                merged_file += fragment.message  # Assume it's already bytes
+
+        file_name, file_size, num_fragments = file_metadata.split(":")
+        file_path = os.path.join(save_path, file_name)
+
+        with open(file_path, 'wb') as f:
+            f.write(merged_file)
+
+        print(f"File \"{file_name}\" saved to: {file_path}")
+
+        self.fragments_sending.clear()
+        return
+
     def receive_messages(self):
         global FRAGMENT_SIZE
         fragments = []
+        file_to_receive_metadata = ""
+
         while not self.freeze_loops:
             try:
                 data, addr = self.receiving_socket.recvfrom(1024)
+                self.is_receiving_data.set()
                 packet = Packet.deconcatenate(data)
                 ############## TER ###################################
                 if packet.flags == Flags.TER:
@@ -139,6 +215,32 @@ class Peer:
                     message, number_of_fragments = rebuild_fragments(fragments)
                     Prints.received_joined_fragments(message, number_of_fragments)
                     fragments = []
+
+                ############## FILE ##################################
+                elif packet.flags == Flags.F_INFO:
+                    self.fragments_sending.set()
+                    if packet.checksum != calc_checksum(packet.message.encode()):
+                        Prints.checksum_err()
+                        continue
+
+                    self.send_ack(packet)
+
+                    fragments = []
+                    file_to_receive_metadata = packet.message
+                    print(f"\n< Received file transfer request for '{file_to_receive_metadata}' >")
+                    Prints.print_receive_file()
+                elif packet.flags == Flags.FILE:
+                    fragments.append(packet)
+                    self.send_ack(packet)
+                elif packet.flags == Flags.LAST_FILE:
+                    fragments.append(packet)
+                    self.send_ack(packet)
+                    # start thread to merge fragments together but do not block main program
+                    merge_file_fragments_thread = threading.Thread(target=self.merge_file_fragments, args=(fragments, file_to_receive_metadata))
+                    merge_file_fragments_thread.daemon = True
+                    merge_file_fragments_thread.start()
+
+
                 ############## CFL ###################################
                 elif packet.flags == Flags.CFL:
                     old_limit = FRAGMENT_SIZE
@@ -148,13 +250,11 @@ class Peer:
                     print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
                 ############## Regular Message #######################
                 elif packet.seq_num == self.ack_num:
-                    if packet.checksum != calc_checksum(packet.message):
+                    if packet.checksum != calc_checksum(packet.message.encode()):
                         Prints.checksum_err()
                         continue
 
-                    self.ack_num += len(packet.message)  # add length of message to my ack_num
-                    ack_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.ACK)
-                    self.send_socket.sendto(ack_packet.concatenate(), self.peer_address)
+                    self.send_ack(packet)
 
                     if packet.flags != Flags.ACK:
                         Prints.received_package(packet)
@@ -165,11 +265,43 @@ class Peer:
 
             except socket.timeout:
                 continue
+            self.is_receiving_data.clear()
+
+    def enqueue_file(self, file_path):
+        print("Wait, file enqueing is in progress")
+
+        file_name = file_path.split("/")[-1]  # Extract file name from path
+        file_size = os.path.getsize(file_path)
+        num_fragments = (file_size + FRAGMENT_SIZE - 1) // FRAGMENT_SIZE  # Calculate the total number of fragments
+
+        # 1. Prepare metadata packet with file name, file size, and fragment count
+        file_metadata = f"{file_name}:{file_size}:{num_fragments}"
+        metadata_packet = Packet(file_metadata, self.seq_num, self.ack_num, checksum=calc_checksum(file_metadata.encode()), flags=Flags.F_INFO)
+        with self.queue_lock:
+            self.message_queue.append(metadata_packet)
+
+        # 2. send file data in fragments
+        with open(file_path, "rb") as f:
+            for i in range(num_fragments):
+                fragment = f.read(FRAGMENT_SIZE)
+                if not fragment:
+                    break  # End of file reached
+
+                # If this is the last fragment, set the flag to LAST_FILE
+                fragment_flag = Flags.LAST_FILE if i == num_fragments - 1 else Flags.FILE
+
+                fragment_packet = Packet(fragment, seq_num=self.seq_num, ack_num=self.ack_num, identification=i, checksum=calc_checksum(fragment),
+                                         flags=fragment_flag)
+                with self.queue_lock:
+                    self.message_queue.append(fragment_packet)
+
+        print(f"File '{file_name}' enqueued with {num_fragments} fragments.")
+        return
 
     def enqueue_messages(self, data, flags_to_send, push_to_front=False):
         # if message is smaller than fragment limit, push it to the queue immediately without fragment
         if len(data) <= FRAGMENT_SIZE:
-            packet = Packet(data, seq_num=self.seq_num, ack_num=self.ack_num, checksum=calc_checksum(data), flags=flags_to_send)
+            packet = Packet(data, seq_num=self.seq_num, ack_num=self.ack_num, checksum=calc_checksum(data.encode()), flags=flags_to_send)
             if push_to_front:
                 self.message_queue.appendleft(packet)
             else:
@@ -184,7 +316,7 @@ class Peer:
                         fragment_flag = Flags.FRP
 
                     packet = Packet(fragment, seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
-                                    checksum=calc_checksum(fragment), flags=fragment_flag)
+                                    checksum=calc_checksum(fragment.encode()), flags=fragment_flag)
 
                     self.message_queue.append(packet)
 
@@ -194,24 +326,27 @@ class Peer:
             if not self.message_queue:
                 continue
 
+            self.is_sending_data.set()
+
             packet = self.message_queue[0]
             packet.seq_num = self.seq_num
             self.send_socket.sendto(packet.concatenate(), self.peer_address)
 
-            if packet.flags == Flags.NONE:
-                print_size = Prints.send_packet(packet)
-            if packet.flags != Flags.NONE:
+            if packet.flags in {Flags.NONE, Flags.F_INFO}:
+                Prints.send_packet(packet)
+            if packet.flags not in {Flags.NONE, Flags.F_INFO, Flags.FILE, Flags.LAST_FILE}: # those flags we need to wait for ack
                 with self.queue_lock:
                     self.message_queue.popleft()  # Remove the message from the queue
                     continue
 
             self.successful_delivery.clear() #?
 
-            if self.successful_delivery.wait(timeout=5): # or self.successful_kal_delivery.wait(timeout=5):
+            if self.successful_delivery.wait(timeout=5):
                 if packet.flags == Flags.NONE:
                     self.seq_num += len(packet.message)  # Update seq_num on success
                     if packet.flags == Flags.NONE:
-                        Prints.print_send(print_size)
+                        # Prints.print_send(print_size)
+                        print("<<<<")
                 with self.queue_lock:
                     self.message_queue.popleft()  # Remove the sended message from the queue
             else:
@@ -229,35 +364,38 @@ class Peer:
                             self.message_queue.popleft()
                         print(f"Failed to deliver message '{packet.message}' after {max_retries} attempts")
 
+            self.is_sending_data.clear()
+
     def start_keep_alive(self):
         kal_delivery_error = 0
         delay = random.uniform(3, 10)
         time.sleep(delay)
 
         while not self.freeze_loops:
-            self.successful_kal_delivery.clear()
-            self.enqueue_messages("", Flags.KAL, True)
+            if not self.is_sending_data.is_set() and not self.is_receiving_data.is_set():
+                self.successful_kal_delivery.clear()
+                self.enqueue_messages("", Flags.KAL, True)
 
-            delivery = self.successful_kal_delivery.wait(timeout=3)
+                delivery = self.successful_kal_delivery.wait(timeout=3)
 
-            if delivery:
-                if kal_delivery_error > 0:
-                    print("✓ Peer is back online, communication continues ✓")
-                kal_delivery_error = 0
+                if delivery:
+                    if kal_delivery_error > 0:
+                        print("✓ Peer is back online, communication continues ✓")
+                    kal_delivery_error = 0
 
-                # print(f"✓ other peer still alive ✓ {kal_delivery_error}")
-            elif not delivery:
-                kal_delivery_error += 1
-                print(f"X Didn't receive KAL/ACK from other peer. (other peer disconnected?) X")
+                    # print(f"✓ other peer still alive ✓ {kal_delivery_error}")
+                elif not delivery:
+                    kal_delivery_error += 1
+                    print(f"X Didn't receive KAL/ACK from other peer. (other peer disconnected?) X")
 
-            if kal_delivery_error == 3:
-                print(f"\n!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
-                print("(enter anything to proceed)")
-                self.freeze_loops = True
-                self.kill_communication = True
-                return
+                if kal_delivery_error == 3:
+                    print(f"\n!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
+                    print("(enter anything to proceed)")
+                    self.freeze_loops = True
+                    self.kill_communication = True
+                    return
 
-            time.sleep(4) #for 4 seconds, do nothing
+                time.sleep(4) #for 4 seconds, do nothing
 
         return
 
@@ -319,6 +457,9 @@ class Peer:
     def show_menu(self):
         global FRAGMENT_SIZE
         while True:
+            while self.fragments_sending.is_set():
+                pass
+
             choice = Prints.menu()
             if self.kill_communication:
                 return
@@ -340,13 +481,16 @@ class Peer:
                 self.enqueue_messages(new_limit, Flags.CFL, True)
                 print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
             elif choice == 'f':
-                print("not ready yet")
+                file_path = input("Enter file path: ").strip()
+                self.enqueue_file(file_path)
+
             elif choice == '!q' or choice == '!quit':
                 self.freeze_loops = True
                 self.start_terminate_connection()
                 break
             else:
-                print("Invalid choice. Please try again.")
+                if not self.fragments_sending.is_set():
+                    print("Invalid choice. Please try again.")
 
 if __name__ == '__main__':
 

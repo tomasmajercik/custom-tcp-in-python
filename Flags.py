@@ -15,3 +15,7 @@ class Flags:
 
     TER = 0b1100
     TER_ACK = 0b1110
+
+    FILE = 0b0101
+    F_INFO = 0b1111
+    LAST_FILE = 0b0110

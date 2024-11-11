@@ -85,4 +85,9 @@ class Prints:
         print("\n")
         print_send(output_to_string)
         print(output_to_string)
-        return output_to_string
+        # return output_to_string
+
+    @staticmethod
+    def print_receive_file():
+        print("Starting receiving data, please wait...")
+        print("----------------------------------------")

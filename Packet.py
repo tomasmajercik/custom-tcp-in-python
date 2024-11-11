@@ -16,7 +16,8 @@ class Packet:
         # Pack header fields and message length
         header = struct.pack(self.HEADER_FORMAT, self.seq_num, self.ack_num, self.identification, self.checksum, self.flags)
         # Combine header and message
-        return header + self.message.encode('utf-8')
+        message_bytes = self.message if isinstance(self.message, bytes) else self.message.encode('utf-8')
+        return header + message_bytes
 
     @staticmethod
     def deconcatenate(packet):
@@ -26,7 +27,16 @@ class Packet:
         seq_num, ack_num, identification, checksum, flags = struct.unpack(Packet.HEADER_FORMAT, packet[:header_size])
 
         # Decode the message from the remaining bytes
-        message = packet[header_size:].decode('utf-8')
+        # Get the message from the remaining bytes of the packet
+        message_bytes = packet[header_size:]
+
+        # Try to decode the message if it's a string, otherwise leave it as bytes
+        try:
+            # Attempt to decode as UTF-8 string
+            message = message_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            # If it fails to decode, assume it's already in bytes
+            message = message_bytes
 
         return Packet(message, seq_num, ack_num, identification, checksum, flags)
 

@@ -184,7 +184,6 @@ class Peer:
         global FRAGMENT_SIZE
         fragments = []
         file_to_receive_metadata = ""
-        expected_id = 0
 
         while not self.freeze_loops:
             try:
@@ -211,7 +210,9 @@ class Peer:
                 ############## FRAGMENTED Message #####################
                 elif packet.flags == Flags.FRP:
                     fragments.append(packet)
+                    self.send_ack(packet)
                 elif packet.flags == Flags.FRP_ACK:
+                    self.send_ack(packet)
                     fragments.append(packet)
                     message, number_of_fragments = rebuild_fragments(fragments)
                     Prints.received_joined_fragments(message, number_of_fragments)
@@ -233,7 +234,7 @@ class Peer:
                     Prints.print_receive_file()
                 elif packet.flags == Flags.FILE:
                     fragments.append(packet)
-                    print(f"rec {packet.identification}")
+                    # print(f"rec {packet.identification}")
                     self.send_ack(packet)
                 elif packet.flags == Flags.LAST_FILE:
                     fragments.append(packet)
@@ -242,7 +243,7 @@ class Peer:
                     merge_file_fragments_thread = threading.Thread(target=self.merge_file_fragments, args=(fragments, file_to_receive_metadata))
                     merge_file_fragments_thread.daemon = True
                     merge_file_fragments_thread.start()
-
+                    fragments = []
 
                 ############## CFL ###################################
                 elif packet.flags == Flags.CFL:
@@ -335,9 +336,13 @@ class Peer:
             packet.seq_num = self.seq_num
             self.send_socket.sendto(packet.concatenate(), self.peer_address)
 
+            if not packet.flags == Flags.KAL and not packet.flags == Flags.KAL_ACK:
+                print(f"{packet.seq_num}|data")
+
+
             if packet.flags in {Flags.NONE, Flags.F_INFO}:
                 Prints.send_packet(packet)
-            if packet.flags not in {Flags.NONE, Flags.F_INFO, Flags.FILE, Flags.LAST_FILE}: # those flags we need to wait for ack
+            if packet.flags not in {Flags.NONE, Flags.F_INFO, Flags.FILE, Flags.LAST_FILE, Flags.FRP, Flags.FRP_ACK}: # those flags we need to wait for ack
                 with self.queue_lock:
                     self.message_queue.popleft()  # Remove the message from the queue
                     continue
@@ -345,11 +350,11 @@ class Peer:
             self.successful_delivery.clear() #?
 
             if self.successful_delivery.wait(timeout=5):
+                print("for ack dfadf")
+                self.seq_num += len(packet.message)  # Update seq_num on success
                 if packet.flags == Flags.NONE:
-                    self.seq_num += len(packet.message)  # Update seq_num on success
-                    if packet.flags == Flags.NONE:
-                        # Prints.print_send(print_size)
-                        print("<<<<")
+                    # Prints.print_send(print_size)
+                    print("<<<<")
                 with self.queue_lock:
                     self.message_queue.popleft()  # Remove the sended message from the queue
             else:
@@ -375,30 +380,30 @@ class Peer:
         time.sleep(delay)
 
         while not self.freeze_loops:
-            if not self.is_sending_data.is_set() and not self.is_receiving_data.is_set():
-                self.successful_kal_delivery.clear()
-                self.enqueue_messages("", Flags.KAL, True)
+            # if not self.is_sending_data.is_set() and not self.is_receiving_data.is_set():
+            self.successful_kal_delivery.clear()
+            self.enqueue_messages("", Flags.KAL, True)
 
-                delivery = self.successful_kal_delivery.wait(timeout=3)
+            delivery = self.successful_kal_delivery.wait(timeout=3)
 
-                if delivery:
-                    if kal_delivery_error > 0:
-                        print("✓ Peer is back online, communication continues ✓")
-                    kal_delivery_error = 0
+            if delivery:
+                if kal_delivery_error > 0:
+                    print("✓ Peer is back online, communication continues ✓")
+                kal_delivery_error = 0
 
-                    # print(f"✓ other peer still alive ✓ {kal_delivery_error}")
-                elif not delivery:
-                    kal_delivery_error += 1
-                    print(f"X Didn't receive KAL/ACK from other peer. (other peer disconnected?) X")
+                # print(f"✓ other peer still alive ✓ {kal_delivery_error}")
+            elif not delivery:
+                kal_delivery_error += 1
+                print(f"X Didn't receive KAL/ACK from other peer. (other peer disconnected?) X")
 
-                if kal_delivery_error == 3:
-                    print(f"\n!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
-                    print("(enter anything to proceed)")
-                    self.freeze_loops = True
-                    self.kill_communication = True
-                    return
+            if kal_delivery_error == 3:
+                print(f"\n!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
+                print("(enter anything to proceed)")
+                self.freeze_loops = True
+                self.kill_communication = True
+                return
 
-                time.sleep(4) #for 4 seconds, do nothing
+            time.sleep(4) #for 4 seconds, do nothing
 
         return
 

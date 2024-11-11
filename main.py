@@ -184,6 +184,7 @@ class Peer:
         global FRAGMENT_SIZE
         fragments = []
         file_to_receive_metadata = ""
+        expected_id = 0
 
         while not self.freeze_loops:
             try:
@@ -216,6 +217,7 @@ class Peer:
                     Prints.received_joined_fragments(message, number_of_fragments)
                     fragments = []
 
+
                 ############## FILE ##################################
                 elif packet.flags == Flags.F_INFO:
                     self.fragments_sending.set()
@@ -231,6 +233,7 @@ class Peer:
                     Prints.print_receive_file()
                 elif packet.flags == Flags.FILE:
                     fragments.append(packet)
+                    print(f"rec {packet.identification}")
                     self.send_ack(packet)
                 elif packet.flags == Flags.LAST_FILE:
                     fragments.append(packet)

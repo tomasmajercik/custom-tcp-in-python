@@ -124,9 +124,9 @@ class Peer:
     def merge_file_fragments(self, fragments, file_metadata):
 
         print("All data received - press ENTER to proceed")
-        # save_path = input("Enter desired path to save file: ")
+        save_path = input("Enter desired path to save file: ")
 
-        save_path = "/home/tomasmajercik/Desktop/peer2/"
+        # save_path = "/home/tomasmajercik/Desktop/peer2/"
         merged_file = b''
         for fragment in fragments:
             # Check if the fragment's message is in bytes or string, and handle accordingly
@@ -236,7 +236,6 @@ class Peer:
 
             except socket.timeout:
                 continue
-            self.is_receiving_data.clear()
 
     def enqueue_file(self, file_path):
         print("Wait, file enqueing is in progress")
@@ -297,7 +296,7 @@ class Peer:
             if not self.message_queue:
                 continue
 
-            self.is_sending_data.set()
+            self.is_sending_data.set() # set the sending to inform keep alive that something has been sent
 
             packet = self.message_queue[0]
             packet.seq_num = self.seq_num
@@ -322,11 +321,10 @@ class Peer:
             self.successful_delivery.clear() #?
 
             if self.successful_delivery.wait(timeout=5):
-                print("for ack dfadf")
                 self.seq_num += len(packet.message)  # Update seq_num on success
-                if packet.flags == Flags.NONE:
+                # if packet.flags == Flags.NONE:
                     # Prints.print_send(print_size)
-                    print("<<<<")
+                print("<<<<")
                 with self.queue_lock:
                     self.message_queue.popleft()  # Remove the sended message from the queue
             else:
@@ -344,39 +342,42 @@ class Peer:
                             self.message_queue.popleft()
                         print(f"Failed to deliver message '{packet.message}' after {max_retries} attempts")
 
-            self.is_sending_data.clear()
-
     def start_keep_alive(self):
         kal_delivery_error = 0
         delay = random.uniform(3, 10)
         time.sleep(delay)
 
         while not self.freeze_loops:
-            # if not self.is_sending_data.is_set() and not self.is_receiving_data.is_set():
-            self.successful_kal_delivery.clear()
-            self.enqueue_messages("", Flags.KAL, True)
+            if self.is_sending_data.is_set() or self.is_receiving_data.is_set():
+                self.is_sending_data.clear()
+                self.is_receiving_data.clear()
+                time.sleep(5)
 
-            delivery = self.successful_kal_delivery.wait(timeout=3)
+            else: # peer send nothing and received nothing
+                self.successful_kal_delivery.clear()
+                self.enqueue_messages("", Flags.KAL, True)
 
-            if delivery:
-                if kal_delivery_error > 0:
-                    print("✓ Peer is back online, communication continues ✓")
-                kal_delivery_error = 0
+                delivery = self.successful_kal_delivery.wait(timeout=3)
 
-                # print(f"✓ other peer still alive ✓ {kal_delivery_error}")
-            elif not delivery:
-                kal_delivery_error += 1
-                print(f"X Didn't receive KAL/ACK from other peer. (other peer disconnected?) X")
+                if delivery:
+                    if kal_delivery_error > 0:
+                        print("✓ Peer is back online, communication continues ✓")
+                    kal_delivery_error = 0
 
-            if kal_delivery_error == 3:
-                print(f"\n!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
-                print("(enter anything to proceed)")
-                self.freeze_loops = True
-                self.kill_communication = True
-                return
+                    # print(f"✓ other peer still alive ✓ {kal_delivery_error}")
+                elif not delivery:
+                    kal_delivery_error += 1
+                    print(f"X Didn't receive KAL/ACK from other peer. (other peer disconnected?) X")
 
-            self.successful_kal_delivery.clear()
-            time.sleep(4) #for 4 seconds, do nothing
+                if kal_delivery_error == 3:
+                    print(f"\n!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
+                    print("(enter anything to proceed)")
+                    self.freeze_loops = True
+                    self.kill_communication = True
+                    return
+
+                self.successful_kal_delivery.clear()
+                time.sleep(4) #for 4 seconds, do nothing
 
         return
 

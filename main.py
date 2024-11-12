@@ -13,6 +13,8 @@ from Prints import *
 
 
 FRAGMENT_SIZE = 100
+MAX_FRAGMENT_SIZE = 1300 # Ethernet - IP Header - UDP Header - Custom Protocol Header 1448??? preco ide iba 1300
+# este path aby existovala treba zistit
 
 def calc_checksum(message):
     crc16_func = crcmod.mkCrcFun(0x11021, initCrc=0xFFFF, xorOut=0x0000) #0x11021: This is the CRC-16-CCITT polynomial; initCrc=0xFFFF: This initializes the CRC register; xorOut=0x0000: This value is XORed with the final CRC value to complete the checksum.
@@ -79,7 +81,7 @@ class Peer:
         while retries < max_retries:
             try:
                 try:
-                    data, addr = self.receiving_socket.recvfrom(1024)
+                    data, addr = self.receiving_socket.recvfrom(MAX_FRAGMENT_SIZE)
                     received_packet = Packet.deconcatenate(data)
 
                     if received_packet.flags == Flags.SYN:  # Received SYN from the other peer
@@ -154,7 +156,7 @@ class Peer:
 
         while not self.freeze_loops:
             try:
-                data, addr = self.receiving_socket.recvfrom(1024)
+                data, addr = self.receiving_socket.recvfrom(MAX_FRAGMENT_SIZE)
                 self.is_receiving_data.set()
                 packet = Packet.deconcatenate(data)
                 ############## TER ###################################
@@ -318,7 +320,7 @@ class Peer:
 
 
             # if packet.flags not in {Flags.NONE, Flags.F_INFO, Flags.FILE, Flags.LAST_FILE, Flags.FRP, Flags.FRP_ACK}: # those flags we need to wait for ack
-            if packet.flags in {Flags.TER, Flags.TER_ACK, Flags.ACK, Flags.KAL, Flags.KAL_ACK}: # those which do not need ack
+            if packet.flags in {Flags.TER, Flags.TER_ACK, Flags.ACK, Flags.KAL, Flags.KAL_ACK, Flags.CFL}: # those which do not need ack
                 with self.queue_lock:
                     self.message_queue.popleft()  # Remove the message from the queue
                     continue
@@ -401,12 +403,13 @@ class Peer:
                 # send TER
                 TER_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.TER) # SYN
                 self.send_socket.sendto(TER_packet.concatenate(), self.peer_address)
+                self.freeze_loops = True
                 print(f"\n1. SENT termination (attempt {retries + 1})")
                 retries += 1
 
                 # Expect TER/ACK
                 self.receiving_socket.settimeout(retry_interval)  # if nothing received in interval, do not wait
-                data, addr = self.receiving_socket.recvfrom(1024)
+                data, addr = self.receiving_socket.recvfrom(MAX_FRAGMENT_SIZE)
 
                 TER_ACK_packet = Packet.deconcatenate(data)
 
@@ -435,7 +438,7 @@ class Peer:
         print(f"2. Sent termination TER/ACK")
 
         while True:
-            data, addr = self.receiving_socket.recvfrom(1024)  # recieve ACK
+            data, addr = self.receiving_socket.recvfrom(MAX_FRAGMENT_SIZE)  # recieve ACK
             ACK_packet = Packet.deconcatenate(data)
 
             if ACK_packet.flags == Flags.ACK:  # if ACK received

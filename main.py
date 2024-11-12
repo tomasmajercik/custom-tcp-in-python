@@ -12,14 +12,18 @@ from Flags import Flags
 from Prints import *
 
 
-FRAGMENT_SIZE = 100
-MAX_FRAGMENT_SIZE = 1300 # Ethernet - IP Header - UDP Header - Custom Protocol Header 1448??? preco ide iba 1300
-# este path aby existovala treba zistit
+# FRAGMENT_SIZE = 100
+FRAGMENT_SIZE = 1457
+MAX_FRAGMENT_SIZE = 1457 # Ethernet-IP Header-UDP Header-Custom Protocol Header = 1500−20−8-15 = 1457
+#este path aby existovala treba zistit
 
 def calc_checksum(message):
+    if isinstance(message, str):
+        message = message.encode()  # Convert to bytes if it's a string
     crc16_func = crcmod.mkCrcFun(0x11021, initCrc=0xFFFF, xorOut=0x0000) #0x11021: This is the CRC-16-CCITT polynomial; initCrc=0xFFFF: This initializes the CRC register; xorOut=0x0000: This value is XORed with the final CRC value to complete the checksum.
     checksum = crc16_func(message)
     return checksum
+
 
 def rebuild_fragments(fragments):
     full_message = ""
@@ -81,7 +85,7 @@ class Peer:
         while retries < max_retries:
             try:
                 try:
-                    data, addr = self.receiving_socket.recvfrom(MAX_FRAGMENT_SIZE)
+                    data, addr = self.receiving_socket.recvfrom(1500)
                     received_packet = Packet.deconcatenate(data)
 
                     if received_packet.flags == Flags.SYN:  # Received SYN from the other peer
@@ -126,7 +130,14 @@ class Peer:
     def merge_file_fragments(self, fragments, file_metadata):
 
         print("All data received - press ENTER to proceed")
-        save_path = input("Enter desired path to save file: ")
+        while True:
+            save_path = input("Enter desired path to save file: ")
+
+            if os.path.exists(save_path):
+                print("~~ saving file, please wait ~~")
+                break  # Exit the loop if the path exists
+            else:
+                print("File path does not exist. Please try again.")
 
         # save_path = "/home/tomasmajercik/Desktop/peer2/"
         merged_file = b''
@@ -156,7 +167,7 @@ class Peer:
 
         while not self.freeze_loops:
             try:
-                data, addr = self.receiving_socket.recvfrom(MAX_FRAGMENT_SIZE)
+                data, addr = self.receiving_socket.recvfrom(1500)
                 self.is_receiving_data.set()
                 packet = Packet.deconcatenate(data)
                 ############## TER ###################################
@@ -204,6 +215,8 @@ class Peer:
                     Prints.print_receive_file()
                     fragment_count_to_receive = packet.message.split(":")[2]
                 elif packet.flags == Flags.FILE:
+                    if packet.checksum != calc_checksum(packet.message):
+                        print("CORRUPETED HERE")
                     fragments.append(packet)
                     print(f"Received fragment - completed {(packet.identification * 100 / int(fragment_count_to_receive)):.2f}%")
                     self.send_ack(packet)
@@ -409,7 +422,7 @@ class Peer:
 
                 # Expect TER/ACK
                 self.receiving_socket.settimeout(retry_interval)  # if nothing received in interval, do not wait
-                data, addr = self.receiving_socket.recvfrom(MAX_FRAGMENT_SIZE)
+                data, addr = self.receiving_socket.recvfrom(1500)
 
                 TER_ACK_packet = Packet.deconcatenate(data)
 
@@ -438,7 +451,7 @@ class Peer:
         print(f"2. Sent termination TER/ACK")
 
         while True:
-            data, addr = self.receiving_socket.recvfrom(MAX_FRAGMENT_SIZE)  # recieve ACK
+            data, addr = self.receiving_socket.recvfrom(1500)  # recieve ACK
             ACK_packet = Packet.deconcatenate(data)
 
             if ACK_packet.flags == Flags.ACK:  # if ACK received
@@ -466,18 +479,27 @@ class Peer:
             elif choice == "cfl":
                 print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
                 print(f"Fragment size is currently set to {FRAGMENT_SIZE}")
-                new_limit = input("Enter q for quit or enter new fragment limit: ").strip()
+                new_limit = input("Enter 'q' for quit   or    enter new fragment limit (or 'MAX' to set max fragments possible): ").strip()
                 if new_limit == 'q':
                     print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
                     continue
-                print(f"Changed fragmentation limit from {FRAGMENT_SIZE} to {new_limit}")
-                FRAGMENT_SIZE = int(new_limit)
-                self.enqueue_messages(new_limit, Flags.CFL, True)
-                print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+                if new_limit == 'MAX':
+                    new_limit = str(MAX_FRAGMENT_SIZE)
+
+                if int(new_limit) <= MAX_FRAGMENT_SIZE:
+                    print(f"Changed fragmentation limit from {FRAGMENT_SIZE} to {new_limit}")
+                    FRAGMENT_SIZE = int(new_limit)
+                    self.enqueue_messages(new_limit, Flags.CFL, True)
+                    print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+                else:
+                    print(f"Can not change fragmentation limit above {MAX_FRAGMENT_SIZE}.")
             elif choice == 'f':
                 file_path = input("Enter file path: ").strip()
-                self.enqueue_file(file_path)
 
+                if not os.path.exists(file_path):
+                    print("This path does not exist. Please enter valid one.")
+                else:
+                    self.enqueue_file(file_path)
             elif choice == '!q' or choice == '!quit':
                 self.freeze_loops = True
                 self.start_terminate_connection()

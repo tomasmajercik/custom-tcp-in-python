@@ -64,9 +64,9 @@ class Peer:
         self.fragments_sending = threading.Event()
         self.is_sending_data = threading.Event()
         self.is_receiving_data = threading.Event()
+        self.answer_ter = threading.Event()
         #quit variables
         self.freeze_loops = False
-        self.kill_communication = False
 
     def send_ack(self, packet):
         self.ack_num += len(packet.message)  # add length of message to my ack_num
@@ -165,19 +165,28 @@ class Peer:
         file_to_receive_metadata = ""
         fragment_count_to_receive = 100
 
-        while not self.freeze_loops:
+        # while not self.freeze_loops:
+        while True:
             try:
                 data, addr = self.receiving_socket.recvfrom(1500)
                 self.is_receiving_data.set()
                 packet = Packet.deconcatenate(data)
                 ############## TER ###################################
+                # if packet.flags == Flags.TER:
+                #     Prints.start_termination()
+                #     # self.freeze_loops = True
+                #     if self.answer_terminate_connection():
+                #         self.receiving_socket.close()
+                #     return
                 if packet.flags == Flags.TER:
-                    Prints.start_termination()
-                    self.freeze_loops = True
-                    if self.answer_terminate_connection():
-                        self.receiving_socket.close()
-                        self.kill_communication = True
+                    print("dostal som ter")
+                    self.answer_terminate_connection()
                     return
+                elif packet.flags == Flags.TER_ACK:
+                    print("dostal som terack")
+                    self.answer_ter.set()
+                    return
+
                 ############## ACK ###################################
                 elif packet.flags == Flags.ACK:
                     self.successful_delivery.set()
@@ -310,7 +319,8 @@ class Peer:
 
     def send_from_queue(self):
         fragment_count_to_send = 100
-        while not self.freeze_loops:
+        # while not self.freeze_loops:
+        while True:
             if not self.message_queue:
                 continue
 
@@ -320,10 +330,12 @@ class Peer:
             packet.seq_num = self.seq_num
             self.send_socket.sendto(packet.concatenate(), self.peer_address)
 
-            # if packet.flags == Flags.KAL:
-            #     print(f"POSLAL SOM KAL")
-            # if packet.flags == Flags.KAL_ACK:
-            #     print("POSLAL SOM KAL_ACK")
+            if packet.flags == Flags.TER: # if sent termination packet, return from function
+                print("poslal som ter")
+                return
+            if packet.flags == Flags.TER_ACK:
+                print("poslal som ter_ack")
+                return
 
 
             if packet.flags in {Flags.NONE, Flags.F_INFO}:
@@ -371,7 +383,8 @@ class Peer:
         delay = random.uniform(3, 10)
         time.sleep(delay)
 
-        while not self.freeze_loops:
+        # while not self.freeze_loops:
+        while True:
             if self.is_sending_data.is_set() or self.is_receiving_data.is_set():
                 self.is_sending_data.clear()
                 self.is_receiving_data.clear()
@@ -397,7 +410,6 @@ class Peer:
                     print(f"\n!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
                     print("(enter anything to proceed)")
                     self.freeze_loops = True
-                    self.kill_communication = True
                     return
 
                 self.successful_kal_delivery.clear()
@@ -405,61 +417,38 @@ class Peer:
 
         return
 
+    ####################################################################################################################
     def start_terminate_connection(self):
+        self.answer_ter.clear()
         print("#starting termination process")
-        retry_interval = 2
-        max_retries = 15
-        retries = 0
 
-        while retries < max_retries:
-            try:
-                # send TER
-                TER_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.TER) # SYN
-                self.send_socket.sendto(TER_packet.concatenate(), self.peer_address)
-                self.freeze_loops = True
-                print(f"\n1. SENT termination (attempt {retries + 1})")
-                retries += 1
+        self.enqueue_messages("", Flags.TER, True)
 
-                # Expect TER/ACK
-                self.receiving_socket.settimeout(retry_interval)  # if nothing received in interval, do not wait
-                data, addr = self.receiving_socket.recvfrom(1500)
+        self.answer_ter.wait()
 
-                TER_ACK_packet = Packet.deconcatenate(data)
-
-                if TER_ACK_packet.flags == Flags.TER_ACK:  # if TER/ACK received
-                    print(f"2. RECEIVED termination TER/ACK")
-                    self.seq_num += 1  # sent one phantom byte
-                    self.ack_num = TER_ACK_packet.seq_num + 1  # Update ACK number to one more than received seq num
-                    ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.ACK)  # ACK
-
-                    self.send_socket.sendto(ACK_packet.concatenate(), self.peer_address)
-                    print(f"3. SENT termination ACK")
-                    self.seq_num += 1  # after succesfull handshake, "I am waiting for this package"
-
-                    self.receiving_socket.close()
-                    self.kill_communication = True
-                    print(f"\n## Termination successful, connection ended")
-                    return
+        if self.answer_ter.is_set():
+            ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.ACK)
+            self.send_socket.sendto(ACK_packet.concatenate(), self.peer_address)
+            print("sent ACK, connection ended")
+            self.freeze_loops = True
+            return
 
 
-
-            except socket.timeout:
-                print(f"retrying termination... (attempt {retries + 1})")
     def answer_terminate_connection(self):
-        TER_ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.TER_ACK)  # send SYN-ACK
-        self.send_socket.sendto(TER_ACK_packet.concatenate(), self.peer_address)
-        print(f"2. Sent termination TER/ACK")
+        # TER_ACK_packet = Packet("", seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.TER_ACK)  # send SYN-ACK
+        # self.send_socket.sendto(TER_ACK_packet.concatenate(), self.peer_address)
+        self.enqueue_messages("", Flags.TER_ACK, True)
+        print(f"poslal som terack")
 
         while True:
             data, addr = self.receiving_socket.recvfrom(1500)  # recieve ACK
             ACK_packet = Packet.deconcatenate(data)
 
             if ACK_packet.flags == Flags.ACK:  # if ACK received
-                print(f"3. Received termination ACK")
+                print(f"dostal som ack")
                 print(f"\n##Termination successful, connection ended")
-                self.kill_communication = True
-                # self.ack_num += 1  # after succesfull handshake, "I am waiting for this package"
-                return True
+                self.freeze_loops = True
+                return
 
     def show_menu(self):
         global FRAGMENT_SIZE
@@ -468,7 +457,7 @@ class Peer:
                 pass
 
             choice = Prints.menu()
-            if self.kill_communication:
+            if self.freeze_loops:
                 return
 
             if choice == 'm':
@@ -501,9 +490,9 @@ class Peer:
                 else:
                     self.enqueue_file(file_path)
             elif choice == '!q' or choice == '!quit':
-                self.freeze_loops = True
                 self.start_terminate_connection()
-                break
+                if self.freeze_loops:
+                    return
             else:
                 if not self.fragments_sending.is_set():
                     print("Invalid choice. Please try again.")

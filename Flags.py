@@ -1,11 +1,11 @@
 class Flags:
     NONE = 0b0000
-    # ACK = 0b0010
+    ACK = 0b0010
     # NACK = 0b1101
     # NONE = 0b0000
     #
-    # SYN = 0b0001
-    # SYN_ACK = 0b0011
+    SYN = 0b0001
+    SYN_ACK = 0b0011
     #
     # CFL = 0b0100
     # FRP = 0b1000

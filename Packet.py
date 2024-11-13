@@ -27,15 +27,14 @@ class Packet:
 
         # Unpack the header
         seq_num, ack_num, identification, checksum, flags = struct.unpack(Packet.HEADER_FORMAT, header_data)
-
-        decoded_data = data
-        try:
-            # Attempt to decode as UTF-8 for text data
-            decoded_data = data.decode('utf-8')
-        except UnicodeDecodeError:
-            # Keep as bytes if decoding fails
-            pass
+        #
+        # try:
+        #     # Attempt to decode as UTF-8 for text data
+        #     data = data.decode()
+        # except UnicodeDecodeError:
+        #     # Keep as bytes if decoding fails
+        #     pass
 
             # Create and return a Packet instance
-        return Packet(seq_num, ack_num, identification, checksum, flags, decoded_data)
+        return Packet(seq_num, ack_num, identification, checksum, flags, data)
 

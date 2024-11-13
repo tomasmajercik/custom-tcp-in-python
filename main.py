@@ -128,24 +128,21 @@ class Peer:
         return False
 
     def merge_file_fragments(self, fragments, file_metadata):
-
         print("All data received - press ENTER to proceed")
         while True:
             save_path = input("Enter desired path to save file: ")
-
             if os.path.exists(save_path):
                 print("~~ saving file, please wait ~~")
                 break  # Exit the loop if the path exists
             else:
                 print("File path does not exist. Please try again.")
 
-        # save_path = "/home/tomasmajercik/Desktop/peer2/"
         merged_file = b''
         for fragment in fragments:
             # Check if the fragment's message is in bytes or string, and handle accordingly
-            if isinstance(fragment.message, str):
-                merged_file += fragment.message.encode('utf-8')  # Encode string to bytes
-            else:
+            # if isinstance(fragment.message, str):
+            #     merged_file += fragment.message.encode('utf-8')  # Encode string to bytes
+            # else:
                 merged_file += fragment.message  # Assume it's already bytes
 
         file_name, file_size, num_fragments = file_metadata.split(":")

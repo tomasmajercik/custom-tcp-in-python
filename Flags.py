@@ -7,7 +7,7 @@ class Flags:
     SYN = 0b0001
     SYN_ACK = 0b0011
     #
-    # CFL = 0b0100
+    CFL = 0b0100
     FRP = 0b1000
     FRP_ACK = 0b1010
     #

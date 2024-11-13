@@ -152,6 +152,15 @@ class Peer:
                     print(f"\n<<<<<<\nRECEIVED: {message.decode()} (message was received as {number_of_fragments} fragments)\n<<<<<< \n")
                     fragments = [] # reset fragments
                     continue
+                ####### Change Fragment Limit ##########################################################################
+                if rec_packet.flags == Flags.CFL:
+                    global FRAGMENT_SIZE
+                    old_limit = FRAGMENT_SIZE
+                    self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
+                    FRAGMENT_SIZE = int(rec_packet.data.decode())
+                    print("\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+                    print(f"Other peer has just changed fragmentation limit from {old_limit} to {FRAGMENT_SIZE}")
+                    print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
                 ####### Ordinary messages ##############################################################################
                 if rec_packet.flags == Flags.NONE: # is an ordinary messaga
                     if rec_packet.checksum != Functions.calc_checksum(rec_packet.data): # calculate checksum
@@ -203,6 +212,27 @@ class Peer:
                 print("##############\n")
                 self.enqueue_message(message)
                 continue
+            if choice == "cfl": # change fragment limit
+                global FRAGMENT_SIZE
+                print("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+                print(f"Fragment size is currently set to {FRAGMENT_SIZE}")
+                new_limit = input(
+                    "Enter 'q' for quit   or    enter new fragment limit (or 'MAX' to set max fragments possible): ").strip()
+                if new_limit == 'q':
+                    print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+                    continue
+                if new_limit == 'MAX':
+                    new_limit = str(MAX_FRAGMENT_SIZE)
+
+                if int(new_limit) <= MAX_FRAGMENT_SIZE:
+                    print(f"Changed fragmentation limit from {FRAGMENT_SIZE} to {new_limit}")
+                    FRAGMENT_SIZE = int(new_limit)
+                    self.enqueue_message(new_limit, Flags.CFL, True)
+                    print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+                else:
+                    print(f"Can not change fragmentation limit above {MAX_FRAGMENT_SIZE}.")
+                continue
+
 
 if __name__ == '__main__':
 

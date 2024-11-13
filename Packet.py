@@ -4,39 +4,38 @@ class Packet:
 
     HEADER_FORMAT = 'IIIHB'  # two integers, one 16-bit unsigned short for checksum (16 bits), and one byte for flags
 
-    def __init__(self, message, seq_num = 0, ack_num=0, identification=0, checksum=0, flags=0):
-        self.message = message
+    def __init__(self, seq_num = 0, ack_num=0, identification=0, checksum=0, flags=0, data=""):
         self.seq_num = seq_num
         self.ack_num = ack_num
         self.identification = identification
         self.checksum = checksum
         self.flags = flags
+        # Ensure data is bytes - if already in bytes, let it be, if not (is a string), encode it using utf-8
+        self.data = data if isinstance(data, bytes) else data.encode('utf-8')
+
 
     def concatenate(self):
-        # Pack header fields and message length
-        header = struct.pack(self.HEADER_FORMAT, self.seq_num, self.ack_num, self.identification, self.checksum, self.flags)
-        # Combine header and message
-        message_bytes = self.message if isinstance(self.message, bytes) else self.message.encode('utf-8')
-        return header + message_bytes
+        header = struct.pack(self.HEADER_FORMAT, self.seq_num, self.ack_num, self.identification, self.checksum,
+                             self.flags)
+        return header + self.data # add bytes data
 
     @staticmethod
-    def deconcatenate(packet):
-        # Calculate the header size based on HEADER_FORMAT
+    def deconcatenate(data_bytes):
         header_size = struct.calcsize(Packet.HEADER_FORMAT)
-        # Unpack the header fields
-        seq_num, ack_num, identification, checksum, flags = struct.unpack(Packet.HEADER_FORMAT, packet[:header_size])
+        header_data = data_bytes[:header_size]
+        data = data_bytes[header_size:]
 
-        # Decode the message from the remaining bytes
-        # Get the message from the remaining bytes of the packet
-        message_bytes = packet[header_size:]
+        # Unpack the header
+        seq_num, ack_num, identification, checksum, flags = struct.unpack(Packet.HEADER_FORMAT, header_data)
 
-        # Try to decode the message if it's a string, otherwise leave it as bytes
+        decoded_data = data
         try:
-            # Attempt to decode as UTF-8 string
-            message = message_bytes.decode('utf-8')
+            # Attempt to decode as UTF-8 for text data
+            decoded_data = data.decode('utf-8')
         except UnicodeDecodeError:
-            # If it fails to decode, assume it's already in bytes
-            message = message_bytes
+            # Keep as bytes if decoding fails
+            pass
 
-        return Packet(message, seq_num, ack_num, identification, checksum, flags)
+            # Create and return a Packet instance
+        return Packet(seq_num, ack_num, identification, checksum, flags, decoded_data)
 

@@ -261,6 +261,7 @@ class Peer:
                 continue
 
     def enqueue_file(self, file_path):
+
         print("Wait, file enqueing is in progress")
 
         file_name = file_path.split("/")[-1]  # Extract file name from path

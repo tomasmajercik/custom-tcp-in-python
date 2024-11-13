@@ -2,24 +2,14 @@ import socket
 import random
 import threading
 
-import crcmod
 from collections import deque
 
 from Packet import Packet
-from Prints import Prints
+from Functions import Functions
 from Flags import Flags
 
-FRAGMENT_SIZE = 50
+FRAGMENT_SIZE = 5
 MAX_FRAGMENT_SIZE = 1457 # Ethernet-IP Header-UDP Header-Custom Protocol Header = 1500−20−8-15 = 1457
-
-
-def calc_checksum(message):
-    if isinstance(message, str):
-        message = message.encode()  # Convert to bytes if it's a string
-    crc16_func = crcmod.mkCrcFun(0x11021, initCrc=0xFFFF, xorOut=0x0000) #0x11021: This is the CRC-16-CCITT polynomial; initCrc=0xFFFF: This initializes the CRC register; xorOut=0x0000: This value is XORed with the final CRC value to complete the checksum.
-    checksum = crc16_func(message)
-    return checksum
-
 
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
@@ -36,6 +26,7 @@ class Peer:
         self.receiving_socket.bind(self.id)
         self.send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # threading variables
+        self.queue_lock = threading.Lock()
         self.received_ack = threading.Event()
 
 #### HANDSHAKE #########################################################################################################
@@ -113,7 +104,7 @@ class Peer:
 
                 #### flags that don't have to be acknowledged ###
                 if packet_to_send.flags in {Flags.ACK}:
-                    self.data_queue.popleft()
+                    with self.queue_lock: self.data_queue.popleft()
                     break
 
                 # Wait for ACK or timeout
@@ -122,7 +113,7 @@ class Peer:
                 if ack_received:
                     # print("Ack received")
                     self.seq_num += len(packet_to_send.data)
-                    self.data_queue.popleft()
+                    with self.queue_lock: self.data_queue.popleft()
                     break
                 else:
                     print("\n!ACK not received, resending packet! \n")
@@ -132,6 +123,7 @@ class Peer:
 
         return
     def receive_data(self): # is NOT in thread so the program can terminate later
+        fragments = [] # array to store received fragments
         while True:
             try:
                 # set timeout for waiting
@@ -143,13 +135,26 @@ class Peer:
 
                 ##### rec. ACK #########################################################################################
                 if rec_packet.flags == Flags.ACK: # and rec_packet.ack_num == self.seq_num + 1: - if want to check seq/ack
-                    self.received_ack.set()
+                    self.received_ack.set() # this stays only in this if
                     self.ack_num = rec_packet.seq_num + 1
                     continue
-
+                ##### FRagmented Packet ################################################################################
+                if rec_packet.flags == Flags.FRP:
+                    fragments.append(rec_packet)
+                    self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True) # send ack
+                    self.ack_num += rec_packet.seq_num + 1
+                    continue
+                if rec_packet.flags == Flags.FRP_ACK: # last fragmented package
+                    fragments.append(rec_packet)
+                    self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True) # send ack
+                    self.ack_num += rec_packet.seq_num + 1
+                    message, number_of_fragments = Functions.rebuild_fragmented_message(fragments)
+                    print(f"\n<<<<<<\nRECEIVED: {message.decode()} (message was received as {number_of_fragments} fragments)\n<<<<<< \n")
+                    fragments = [] # reset fragments
+                    continue
                 ####### Ordinary messages ##############################################################################
                 if rec_packet.flags == Flags.NONE: # is an ordinary messaga
-                    if rec_packet.checksum != calc_checksum(rec_packet.data): # calculate checksum
+                    if rec_packet.checksum != Functions.calc_checksum(rec_packet.data): # calculate checksum
                         print("checksum does not match - message corrupted")
                         continue
 
@@ -167,15 +172,29 @@ class Peer:
 #### ENQUEING ##########################################################################################################
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False):
         if len(message) < FRAGMENT_SIZE:
-            packet = Packet(identification=0, checksum=calc_checksum(message), flags=flags_to_send, data=message)
-            if push_to_front: self.data_queue.appendleft(packet)
-            elif not push_to_front: self.data_queue.append(packet)
+            packet = Packet(identification=0, checksum=Functions.calc_checksum(message), flags=flags_to_send, data=message)
+            if push_to_front:
+                with self.queue_lock: self.data_queue.appendleft(packet)
+            elif not push_to_front:
+                with self.queue_lock: self.data_queue.append(packet)
+
+        elif len(message) >= FRAGMENT_SIZE: # split data to be sent into multiple fragments if needed
+            fragments = [message[i:i + FRAGMENT_SIZE] for i in range(0, len(message), FRAGMENT_SIZE)]
+            for i, fragment in enumerate(fragments):
+                if i == len(fragments) - 1:  # if it is last fragment, mark it with FRP/ACK
+                    fragment_flag = Flags.FRP_ACK
+                else:
+                    fragment_flag = Flags.FRP
+
+                packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                                checksum=Functions.calc_checksum(fragment.encode()), flags=fragment_flag, data=fragment)
+                with self.queue_lock: self.data_queue.append(packet)
         return
 
 #### PROGRAM CONTROL ###################################################################################################
     def manage_user_input(self): # is in input_thread thread
         while True:
-            Prints.info_menu() # show menu
+            Functions.info_menu() # show menu
             choice = input("Enter your choice: ")
 
             if choice == "m": #message

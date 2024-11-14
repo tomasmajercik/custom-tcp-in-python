@@ -1,3 +1,4 @@
+import queue
 import socket
 import random
 import threading
@@ -15,6 +16,7 @@ class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
         #queue
         self.data_queue = deque()
+        self.command_queue = queue.Queue()
         # routing variables
         self.id = (my_ip, listen_port)
         self.peer_address = (target_ip, send_port)
@@ -84,6 +86,32 @@ class Peer:
         self.receiving_socket.close()
         return False
 
+    #### ENQUEING ##########################################################################################################
+    def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False):
+        if len(message) < FRAGMENT_SIZE:
+            packet = Packet(identification=0, checksum=Functions.calc_checksum(message), flags=flags_to_send,
+                            data=message)
+            if push_to_front:
+                with self.queue_lock:
+                    self.data_queue.appendleft(packet)
+            elif not push_to_front:
+                with self.queue_lock:
+                    self.data_queue.append(packet)
+
+        elif len(message) >= FRAGMENT_SIZE:  # split data to be sent into multiple fragments if needed
+            fragments = [message[i:i + FRAGMENT_SIZE] for i in range(0, len(message), FRAGMENT_SIZE)]
+            for i, fragment in enumerate(fragments):
+                if i == len(fragments) - 1:  # if it is last fragment, mark it with FRP/ACK
+                    fragment_flag = Flags.FRP_ACK
+                else:
+                    fragment_flag = Flags.FRP
+
+                packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                                checksum=Functions.calc_checksum(fragment.encode()), flags=fragment_flag,
+                                data=fragment)
+                with self.queue_lock:
+                    self.data_queue.append(packet)
+        return
 #### SENDING AND RECEIVING #############################################################################################
     def send_data_from_queue(self): # is in send_thread thread
         while True:
@@ -137,6 +165,7 @@ class Peer:
                 if rec_packet.flags == Flags.ACK: # and rec_packet.ack_num == self.seq_num + 1: - if want to check seq/ack
                     self.received_ack.set() # this stays only in this if
                     self.ack_num = rec_packet.seq_num + 1
+                    print("ack received")
                     continue
                 ##### FRagmented Packet ################################################################################
                 if rec_packet.flags == Flags.FRP:
@@ -156,7 +185,7 @@ class Peer:
                 if rec_packet.flags == Flags.CFL:
                     global FRAGMENT_SIZE
                     old_limit = FRAGMENT_SIZE
-                    self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
+                    self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True) # send ack
                     FRAGMENT_SIZE = int(rec_packet.data.decode())
                     print("\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
                     print(f"Other peer has just changed fragmentation limit from {old_limit} to {FRAGMENT_SIZE}")
@@ -178,37 +207,22 @@ class Peer:
             except socket.timeout:
                 continue
 
-#### ENQUEING ##########################################################################################################
-    def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False):
-        if len(message) < FRAGMENT_SIZE:
-            packet = Packet(identification=0, checksum=Functions.calc_checksum(message), flags=flags_to_send, data=message)
-            if push_to_front:
-                with self.queue_lock: self.data_queue.appendleft(packet)
-            elif not push_to_front:
-                with self.queue_lock: self.data_queue.append(packet)
-
-        elif len(message) >= FRAGMENT_SIZE: # split data to be sent into multiple fragments if needed
-            fragments = [message[i:i + FRAGMENT_SIZE] for i in range(0, len(message), FRAGMENT_SIZE)]
-            for i, fragment in enumerate(fragments):
-                if i == len(fragments) - 1:  # if it is last fragment, mark it with FRP/ACK
-                    fragment_flag = Flags.FRP_ACK
-                else:
-                    fragment_flag = Flags.FRP
-
-                packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
-                                checksum=Functions.calc_checksum(fragment.encode()), flags=fragment_flag, data=fragment)
-                with self.queue_lock: self.data_queue.append(packet)
-        return
-
 #### PROGRAM CONTROL ###################################################################################################
+    def input_handler(self):
+        Functions.info_menu()  # show menu
+        while True:
+            command = input("")
+            self.command_queue.put(command)
+
     def manage_user_input(self): # is in input_thread thread
         while True:
-            Functions.info_menu() # show menu
-            choice = input("Enter your choice: ")
+            if self.command_queue.empty():
+                continue
+            choice = self.command_queue.get()
 
             if choice == "m": #message
                 print("\n##############")
-                message = input("Enter message: ")
+                message = self.command_queue.get()
                 print("##############\n")
                 self.enqueue_message(message)
                 continue
@@ -216,22 +230,33 @@ class Peer:
                 global FRAGMENT_SIZE
                 print("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
                 print(f"Fragment size is currently set to {FRAGMENT_SIZE}")
-                new_limit = input(
-                    "Enter 'q' for quit   or    enter new fragment limit (or 'MAX' to set max fragments possible): ").strip()
+
+                print("Enter 'q' for quit   or    enter new fragment limit (or 'MAX' to set max fragments possible): ")
+                new_limit = self.command_queue.get()
                 if new_limit == 'q':
                     print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
                     continue
-                if new_limit == 'MAX':
-                    new_limit = str(MAX_FRAGMENT_SIZE)
-
-                if int(new_limit) <= MAX_FRAGMENT_SIZE:
-                    print(f"Changed fragmentation limit from {FRAGMENT_SIZE} to {new_limit}")
-                    FRAGMENT_SIZE = int(new_limit)
-                    self.enqueue_message(new_limit, Flags.CFL, True)
-                    print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
                 else:
-                    print(f"Can not change fragmentation limit above {MAX_FRAGMENT_SIZE}.")
-                continue
+                    if new_limit == 'MAX':
+                        new_limit = str(MAX_FRAGMENT_SIZE)
+                    try:
+                        new_limit = int(new_limit)  # Try converting input to an integer
+                        if new_limit > MAX_FRAGMENT_SIZE:
+                            print(f"Cannot change fragmentation limit above {MAX_FRAGMENT_SIZE}.")
+                            print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+                            continue
+                        else:
+                            print(f"Changed fragmentation limit from {FRAGMENT_SIZE} to {new_limit}")
+                            FRAGMENT_SIZE = int(new_limit)
+                            self.enqueue_message(str(FRAGMENT_SIZE), Flags.CFL, True)
+                            print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+                    except ValueError:
+                        print("Invalid input. Please enter a number, 'MAX', or 'q' to quit.")
+                        print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+                        continue
+            else:
+                print("invalid command")
+
 
 
 if __name__ == '__main__':
@@ -269,6 +294,10 @@ if __name__ == '__main__':
         print(f"#  Starting data exchange\n")
 
 #### THREADS ###########################################################################################################
+    input_manage_thread = threading.Thread(target=peer.input_handler)
+    input_manage_thread.daemon = True
+    input_manage_thread.start()
+
     input_thread = threading.Thread(target=peer.manage_user_input)
     input_thread.daemon = True
     input_thread.start()

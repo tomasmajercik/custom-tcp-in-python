@@ -1,15 +1,15 @@
 class Flags:
-    NONE = 0b0000
-    ACK = 0b0010
+    NONE = 0b0000 #0
+    ACK = 0b0010 #2
     # NACK = 0b1101
     # NONE = 0b0000
     #
-    SYN = 0b0001
-    SYN_ACK = 0b0011
+    SYN = 0b0001 #1
+    SYN_ACK = 0b0011 #3
     #
-    CFL = 0b0100
-    FRP = 0b1000
-    FRP_ACK = 0b1010
+    CFL = 0b0100 #4
+    FRP = 0b1000 #8
+    FRP_LAST = 0b1010 #10
     #
     # KAL = 0b1001
     # KAL_ACK = 0b1011
@@ -17,6 +17,6 @@ class Flags:
     # TER = 0b1100
     # TER_ACK = 0b1110
     #
-    # FILE = 0b0101
-    # F_INFO = 0b1111
-    # LAST_FILE = 0b0110
+    F_INFO = 0b1111 #15
+    FILE = 0b0101 #5
+    LAST_FILE = 0b0110 #6

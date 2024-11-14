@@ -8,12 +8,12 @@ class Functions:
         print("'m' for message | 'f' for file | 'cfl' for info or change fragmentation size | '!q / !quit' for quit")
 
     @staticmethod
-    def calc_checksum(message):
-        if isinstance(message, str):
-            message = message.encode()  # Convert to bytes if it's a string
+    def calc_checksum(data):
+        if isinstance(data, str):
+            data = data.encode()  # Convert to bytes if it's a string
         crc16_func = crcmod.mkCrcFun(0x11021, initCrc=0xFFFF,
                                      xorOut=0x0000)  # 0x11021: This is the CRC-16-CCITT polynomial; initCrc=0xFFFF: This initializes the CRC register; xorOut=0x0000: This value is XORed with the final CRC value to complete the checksum.
-        checksum = crc16_func(message)
+        checksum = crc16_func(data)
         return checksum
 
     @staticmethod
@@ -32,3 +32,11 @@ class Functions:
             full_message += fragment.data
             expeted_id += 1
         return full_message, expeted_id
+
+    @staticmethod
+    def compare_checksum(received_checksum,received_message):
+        if received_checksum == Functions.calc_checksum(received_message):
+            return True
+        else:
+            print("checksum does not match - message corrupted")
+            return False

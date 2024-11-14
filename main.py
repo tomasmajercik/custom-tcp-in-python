@@ -1,3 +1,4 @@
+import os
 import queue
 import socket
 import random
@@ -30,6 +31,8 @@ class Peer:
         # threading variables
         self.queue_lock = threading.Lock()
         self.received_ack = threading.Event()
+        self.freeze_input = threading.Event()
+        self.direct_input_to_main_control = threading.Event()
 
 #### HANDSHAKE #########################################################################################################
     def handshake(self):
@@ -87,6 +90,35 @@ class Peer:
         return False
 
     #### ENQUEING ##########################################################################################################
+    def enqueue_file(self, file_path):
+        file_name = file_path.split("/")[-1]  # Extract file name from path
+        file_size = os.path.getsize(file_path)
+        num_fragments = (file_size + FRAGMENT_SIZE - 1) // FRAGMENT_SIZE  # Calculate the total number of fragments
+
+        # 1. Prepare metadata packet with file name, file size, and fragment count
+        file_metadata = f"{file_name}:{file_size}:{num_fragments}"
+        metadata_packet = Packet(self.seq_num, self.ack_num, checksum=Functions.calc_checksum(file_metadata),
+                                 flags=Flags.F_INFO, data=file_metadata)
+        with self.queue_lock: self.data_queue.append(metadata_packet)
+
+        # 2. send file data in fragments
+        with open(file_path, "rb") as f:
+            for i in range(num_fragments):
+                fragment = f.read(FRAGMENT_SIZE)
+                if not fragment:
+                    break  # End of file reached
+
+                # If this is the last fragment, set the flag to LAST_FILE
+                fragment_flag = Flags.LAST_FILE if i == num_fragments - 1 else Flags.FILE
+
+                fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                                         checksum=Functions.calc_checksum(fragment),
+                                         flags=fragment_flag, data=fragment)
+                with self.queue_lock: self.data_queue.append(fragment_packet)
+
+        print(f"\nFile '{file_name}' enqueued with {num_fragments} fragments.")
+        return
+
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False):
         if len(message) < FRAGMENT_SIZE:
             packet = Packet(identification=0, checksum=Functions.calc_checksum(message), flags=flags_to_send,
@@ -102,7 +134,7 @@ class Peer:
             fragments = [message[i:i + FRAGMENT_SIZE] for i in range(0, len(message), FRAGMENT_SIZE)]
             for i, fragment in enumerate(fragments):
                 if i == len(fragments) - 1:  # if it is last fragment, mark it with FRP/ACK
-                    fragment_flag = Flags.FRP_ACK
+                    fragment_flag = Flags.FRP_LAST
                 else:
                     fragment_flag = Flags.FRP
 
@@ -129,6 +161,7 @@ class Peer:
 
                 ######## send the packet ##########################
                 self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
+                # print(f"sent: {packet_to_send.flags}")
 
                 #### flags that don't have to be acknowledged ###
                 if packet_to_send.flags in {Flags.ACK}:
@@ -149,9 +182,12 @@ class Peer:
 
 
 
+
         return
     def receive_data(self): # is NOT in thread so the program can terminate later
         fragments = [] # array to store received fragments
+        file_to_receive_metadata = ""
+
         while True:
             try:
                 # set timeout for waiting
@@ -161,24 +197,29 @@ class Peer:
                 packet_data, addr = self.receiving_socket.recvfrom(1500)
                 rec_packet = Packet.deconcatenate(packet_data)
 
-                ##### rec. ACK #########################################################################################
+                ####### rec. ACK #######################################################################################
                 if rec_packet.flags == Flags.ACK: # and rec_packet.ack_num == self.seq_num + 1: - if want to check seq/ack
                     self.received_ack.set() # this stays only in this if
                     self.ack_num = rec_packet.seq_num + 1
-                    print("ack received")
+                    # print("ack received")
                     continue
-                ##### FRagmented Packet ################################################################################
+                ####### FRagmented Packet ##############################################################################
                 if rec_packet.flags == Flags.FRP:
+                    if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
+                        continue
                     fragments.append(rec_packet)
                     self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True) # send ack
                     self.ack_num += rec_packet.seq_num + 1
                     continue
-                if rec_packet.flags == Flags.FRP_ACK: # last fragmented package
+                if rec_packet.flags == Flags.FRP_LAST: # last fragmented package
+                    if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
+                        continue
                     fragments.append(rec_packet)
                     self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True) # send ack
                     self.ack_num += rec_packet.seq_num + 1
                     message, number_of_fragments = Functions.rebuild_fragmented_message(fragments)
-                    print(f"\n<<<<<<\nRECEIVED: {message.decode()} (message was received as {number_of_fragments} fragments)\n<<<<<< \n")
+                    print(f"\n<<<< Received <<<<\n{message.decode()} (message was Received as "
+                          f"{number_of_fragments} fragments)\n<<<< Received <<<< \n")
                     fragments = [] # reset fragments
                     continue
                 ####### Change Fragment Limit ##########################################################################
@@ -190,41 +231,114 @@ class Peer:
                     print("\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
                     print(f"Other peer has just changed fragmentation limit from {old_limit} to {FRAGMENT_SIZE}")
                     print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+                    continue
                 ####### Ordinary messages ##############################################################################
-                if rec_packet.flags == Flags.NONE: # is an ordinary messaga
-                    if rec_packet.checksum != Functions.calc_checksum(rec_packet.data): # calculate checksum
-                        print("checksum does not match - message corrupted")
+                if rec_packet.flags == Flags.NONE: # is an ordinary message
+                    if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
                         continue
 
-                    print(f"\n\n<<<<<<\nRECEIVED data: {rec_packet.data.decode()} \n<<<<<< \n")
+                    print(f"\n\n<<<< Received <<<<\n{rec_packet.data.decode()} \n<<<< Received <<<< \n")
                     #### send ACK to signal data were received correctly
                     self.ack_num = rec_packet.seq_num + len(rec_packet.data)
                     self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True) # send ack
                     continue
-                ########################################################################################################
+                ####### File handling ##################################################################################
+                if rec_packet.flags == Flags.F_INFO:
+                    if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
+                        continue
+
+                    self.freeze_input.set()
+                    self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
+                    fragments = [] # empty fragmetns from older transfer if needed
+                    file_to_receive_metadata = rec_packet.data
+                    print(f"\n< Received file transfer request for '{file_to_receive_metadata.decode()}' >")
+                    continue
+                if rec_packet.flags == Flags.FILE:
+                    if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
+                        continue
+                    fragments.append(rec_packet)
+                    self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
+                    continue
+                if rec_packet.flags == Flags.LAST_FILE:
+                    if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
+                        continue
+                    fragments.append(rec_packet)
+                    self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
+
+                    print("Enter desired path to save file: ")
+
+                    # start thread to merge fragments together but do not block main program
+                    merge_file_fragments_thread = threading.Thread(target=self.merge_file_fragments,
+                                                                   args=(file_to_receive_metadata, fragments))
+                    merge_file_fragments_thread.daemon = True
+                    merge_file_fragments_thread.start()
+                    fragments = []
+                    continue
 
 
             except socket.timeout:
                 continue
 
+#### FILE RECEIVING ####################################################################################################
+    def merge_file_fragments(self, file_to_receive_metadata, fragments):
+        self.freeze_input.clear() # unfreeze input
+        self.direct_input_to_main_control.clear() # turn off input for main functionality to receive data here
+
+        while True:
+            save_path = self.command_queue.get()
+            if os.path.exists(save_path):
+                print("~~ saving file, please wait ~~")
+                break # Exit the loop if the path exists
+            else:
+                print("File path does not exist. Please enter valid path again.")
+
+        merged_file = b''
+        for fragment in fragments: merged_file += fragment.data
+        file_name, file_size, num_fragments = file_to_receive_metadata.decode().split(":")
+        file_path = os.path.join(save_path, file_name)
+
+        with open(file_path, 'wb') as f:
+            f.write(merged_file)
+
+        print(f"File \"{file_name}\" saved to: {file_path}")
+
+        self.direct_input_to_main_control.set() # direct messages again to main input handler
+        return
+
 #### PROGRAM CONTROL ###################################################################################################
     def input_handler(self):
         Functions.info_menu()  # show menu
+        self.freeze_input.clear()
+        self.direct_input_to_main_control.set()
+        
         while True:
-            command = input("")
+            if self.freeze_input.is_set(): # do nothing
+                continue
+            command = input()
             self.command_queue.put(command)
 
     def manage_user_input(self): # is in input_thread thread
         while True:
-            if self.command_queue.empty():
+            if self.command_queue.empty() or not self.direct_input_to_main_control.is_set():
                 continue
             choice = self.command_queue.get()
 
-            if choice == "m": #message
-                print("\n##############")
+            if choice == "help" or choice == "man": # help / man
+                Functions.info_menu()
+                continue
+            if choice == "m": # message
+                print("\n>>>>> Sent >>>>>>>")
                 message = self.command_queue.get()
-                print("##############\n")
+                print(">>>>> Sent >>>>>>>\n")
                 self.enqueue_message(message)
+                continue
+            if choice == "f": # file
+                print("Enter file path")
+                file_path = self.command_queue.get()
+                if not os.path.exists(file_path):
+                    print("This path does not exist. Please enter valid one.")
+                else:
+                    self.enqueue_file(file_path)
                 continue
             if choice == "cfl": # change fragment limit
                 global FRAGMENT_SIZE

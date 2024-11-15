@@ -10,7 +10,7 @@ from Packet import Packet
 from Functions import Functions
 from Flags import Flags
 
-FRAGMENT_SIZE = 5
+FRAGMENT_SIZE = 1457
 MAX_FRAGMENT_SIZE = 1457 # Ethernet-IP Header-UDP Header-Custom Protocol Header = 1500−20−8-15 = 1457
 
 class Peer:
@@ -31,7 +31,7 @@ class Peer:
         # threading variables
         self.queue_lock = threading.Lock()
         self.received_ack = threading.Event()
-        self.freeze_input = threading.Event()
+        self.enable_input = threading.Event()
         self.direct_input_to_main_control = threading.Event()
 
 #### HANDSHAKE #########################################################################################################
@@ -146,6 +146,7 @@ class Peer:
         return
 #### SENDING AND RECEIVING #############################################################################################
     def send_data_from_queue(self): # is in send_thread thread
+        fragment_count_to_send = 100
         while True:
             if not self.data_queue: # if queue is empty, do nothing
                 continue
@@ -156,31 +157,38 @@ class Peer:
             packet_to_send.ack_num = self.ack_num # set current ack
 
             ####### STOP & WAIT ########################################################################################
-            while True:
-                self.received_ack.clear()
 
-                ######## send the packet ##########################
-                self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
-                # print(f"sent: {packet_to_send.flags}")
+            ######## send the packet ##########################
 
-                #### flags that don't have to be acknowledged ###
-                if packet_to_send.flags in {Flags.ACK}:
-                    with self.queue_lock: self.data_queue.popleft()
-                    break
+            self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
+            # print(f"sent: {packet_to_send.flags}")
 
-                # Wait for ACK or timeout
-                ack_received = self.received_ack.wait(timeout=5.0)
+            if packet_to_send.flags in {Flags.ACK}:
+                with self.queue_lock: self.data_queue.popleft()
+                continue
 
-                if ack_received:
-                    # print("Ack received")
-                    self.seq_num += len(packet_to_send.data)
-                    with self.queue_lock: self.data_queue.popleft()
-                    break
-                else:
+            self.received_ack.clear()
+            if self.received_ack.wait(timeout=5.0):
+                if packet_to_send.flags == Flags.F_INFO:
+                    fragment_count_to_send = packet_to_send.data.decode().split(":")[2]
+                print(f"Sent fragment - completed {(packet_to_send.identification * 100 / int(fragment_count_to_send)):.2f}%")
+                # print("Ack received")
+                self.seq_num += len(packet_to_send.data)
+                with self.queue_lock:
+                    self.data_queue.popleft()
+                continue
+            else:
+                while True:
                     print("\n!ACK not received, resending packet! \n")
+                    self.received_ack.clear()
+                    self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
 
-
-
+                    if self.received_ack.wait(timeout=5.0):
+                        # print("Ack received")
+                        self.seq_num += len(packet_to_send.data)
+                        with self.queue_lock:
+                            self.data_queue.popleft()
+                        break
 
 
         return
@@ -188,10 +196,10 @@ class Peer:
         fragments = [] # array to store received fragments
         file_to_receive_metadata = ""
 
+        # set timeout for waiting
+        self.receiving_socket.settimeout(2.0)
         while True:
             try:
-                # set timeout for waiting
-                self.receiving_socket.settimeout(2.0)
 
                 # receive data
                 packet_data, addr = self.receiving_socket.recvfrom(1500)
@@ -247,24 +255,25 @@ class Peer:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
                         continue
 
-                    self.freeze_input.set()
+                    self.enable_input.clear()
                     self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
                     fragments = [] # empty fragmetns from older transfer if needed
                     file_to_receive_metadata = rec_packet.data
                     print(f"\n< Received file transfer request for '{file_to_receive_metadata.decode()}' >")
                     continue
                 if rec_packet.flags == Flags.FILE:
-                    if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
-                        continue
-                    fragments.append(rec_packet)
+                    # if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
+                    #     continue
                     self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
+                    fragments.append(rec_packet)
                     continue
                 if rec_packet.flags == Flags.LAST_FILE:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
                         continue
-                    fragments.append(rec_packet)
                     self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
+                    fragments.append(rec_packet)
 
+                    self.enable_input.set()
                     print("Enter desired path to save file: ")
 
                     # start thread to merge fragments together but do not block main program
@@ -281,7 +290,7 @@ class Peer:
 
 #### FILE RECEIVING ####################################################################################################
     def merge_file_fragments(self, file_to_receive_metadata, fragments):
-        self.freeze_input.clear() # unfreeze input
+        self.enable_input.set() # unfreeze input
         self.direct_input_to_main_control.clear() # turn off input for main functionality to receive data here
 
         while True:
@@ -308,17 +317,19 @@ class Peer:
 #### PROGRAM CONTROL ###################################################################################################
     def input_handler(self):
         Functions.info_menu()  # show menu
-        self.freeze_input.clear()
+        self.enable_input.set()
         self.direct_input_to_main_control.set()
         
         while True:
-            if self.freeze_input.is_set(): # do nothing
-                continue
+            self.enable_input.wait() # wait untill can input again
+
             command = input()
             self.command_queue.put(command)
 
     def manage_user_input(self): # is in input_thread thread
         while True:
+            self.enable_input.wait()
+
             if self.command_queue.empty() or not self.direct_input_to_main_control.is_set():
                 continue
             choice = self.command_queue.get()

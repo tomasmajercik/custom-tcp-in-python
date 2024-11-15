@@ -39,16 +39,13 @@ class Peer:
     def handshake(self):
         max_retries = 15
         retries = 0
-
         # Set timeout for waiting on incoming packets
         self.receiving_socket.settimeout(2.0)
-
         while retries < max_retries:
             try:
                 try:
                     data, addr = self.receiving_socket.recvfrom(1500)
                     received_packet = Packet.deconcatenate(data)
-
                     if received_packet.flags == Flags.SYN:  # Received SYN from the other peer
                         print(f"\n< Received handshake SYN <")
                         self.ack_num = received_packet.seq_num + 1
@@ -56,7 +53,6 @@ class Peer:
                         self.send_socket.sendto(SYN_ACK_packet.concatenate(), self.peer_address)
                         print(f"> Sent handshake SYN/ACK >")
                         self.seq_num += 1
-
                     elif received_packet.flags == Flags.SYN_ACK:  # Received SYN/ACK in response to our SYN
                         print(f"< Received handshake SYN/ACK <")
                         self.seq_num += 1
@@ -64,33 +60,26 @@ class Peer:
                         self.send_socket.sendto(ACK_packet.concatenate(), self.peer_address)
                         self.ack_num = received_packet.seq_num + 1
                         print(f"> Sent handshake ACK >")
-                        print(
-                            f"\n## Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
+                        print(f"\n## Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
                         return True
-
                     elif received_packet.flags == Flags.ACK:  # Received final ACK confirming the handshake
                         print(f"< Received handshake ACK <")
-                        print(
-                            f"\n## Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
+                        print(f"\n## Handshake successful, connection initialized seq: {self.seq_num} ack:{self.ack_num}")
                         return True
-
                 except socket.timeout:
                     # If nothing was received, initiate the handshake by sending SYN
                     if retries == 0:
                         SYN_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, flags=Flags.SYN)
                         self.send_socket.sendto(SYN_packet.concatenate(), self.peer_address)
                         print(f"\n> Sent handshake SYN (attempt {retries + 1}) >")
-
                 retries += 1
-
             except socket.timeout:
                 print(f"Retrying... (attempt {retries + 1})")
-
         print(f"Handshake timeout after {max_retries} retries")
         self.receiving_socket.close()
         return False
 
-    #### ENQUEING ##########################################################################################################
+#### ENQUEING ##########################################################################################################
     def enqueue_file(self, file_path):
         file_name = file_path.split("/")[-1]  # Extract file name from path
         file_size = os.path.getsize(file_path)
@@ -108,22 +97,17 @@ class Peer:
                 fragment = f.read(FRAGMENT_SIZE)
                 if not fragment:
                     break  # End of file reached
-
                 # If this is the last fragment, set the flag to LAST_FILE
                 fragment_flag = Flags.LAST_FILE if i == num_fragments - 1 else Flags.FILE
-
                 fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
                                          checksum=Functions.calc_checksum(fragment),
                                          flags=fragment_flag, data=fragment)
                 with self.queue_lock: self.data_queue.append(fragment_packet)
-
-        # print(f"\nFile '{file_name}' enqueued with {num_fragments} fragments.")
         return
 
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False):
         if len(message) < FRAGMENT_SIZE:
-            packet = Packet(identification=0, checksum=Functions.calc_checksum(message), flags=flags_to_send,
-                            data=message)
+            packet = Packet(identification=0, checksum=Functions.calc_checksum(message), flags=flags_to_send,data=message)
             if push_to_front:
                 with self.queue_lock:
                     self.data_queue.appendleft(packet)
@@ -138,10 +122,8 @@ class Peer:
                     fragment_flag = Flags.FRP_LAST
                 else:
                     fragment_flag = Flags.FRP
-
                 packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
-                                checksum=Functions.calc_checksum(fragment.encode()), flags=fragment_flag,
-                                data=fragment)
+                                checksum=Functions.calc_checksum(fragment.encode()), flags=fragment_flag, data=fragment)
                 with self.queue_lock:
                     self.data_queue.append(packet)
         return
@@ -170,11 +152,9 @@ class Peer:
                 fragment_count_to_send += 1
                 frp_size += len(packet_to_send.data)
 
-
             ######## send the packet ##########################
             self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
-            print(f"sent: {packet_to_send.flags}")
-
+            # print(f"sent: {packet_to_send.flags}")
 
             #### flags that do not need to be acknowledged ####
             if packet_to_send.flags in {Flags.ACK}:
@@ -190,9 +170,7 @@ class Peer:
             ####### STOP & WAIT ########################################################################################
             self.received_ack.clear()
             if self.received_ack.wait(timeout=5.0):
-
                 ###### print sending status if sending file ######
-
                 if packet_to_send.flags == Flags.FILE:
                     progress = (packet_to_send.identification * 100 / int(fragment_count_to_send))
                     current_percentage = int(progress)
@@ -212,7 +190,6 @@ class Peer:
                     fragment_count_to_send = 0
                     frp_size = 0
 
-                # print("Ack received")
                 self.seq_num += len(packet_to_send.data)
                 with self.queue_lock:
                     self.data_queue.popleft()
@@ -229,15 +206,10 @@ class Peer:
                         with self.queue_lock:
                             self.data_queue.popleft()
                         break
-
-
         return
     def receive_data(self): # is NOT in thread so the program can terminate later
         fragments = [] # array to store received fragments
         file_to_receive_metadata = ""
-        fragment_count_to_receive = 100
-        last_printed_percentage = -1
-
         transfer_start_time = None
         corrupted_packages = 0
 
@@ -245,12 +217,10 @@ class Peer:
         self.receiving_socket.settimeout(2.0)
         while True:
             try:
-
                 # receive data
                 packet_data, addr = self.receiving_socket.recvfrom(1500)
                 rec_packet = Packet.deconcatenate(packet_data)
-                print(f"rec: {rec_packet.flags}")
-
+                # print(f"rec: {rec_packet.flags}")
                 ####### rec. ACK #######################################################################################
                 if rec_packet.flags == Flags.ACK: # and rec_packet.ack_num == self.seq_num + 1: - if want to check seq/ack
                     self.received_ack.set() # this stays only in this if
@@ -260,14 +230,23 @@ class Peer:
                 ####### FRagmented Packet ##############################################################################
                 elif rec_packet.flags == Flags.FRP:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
+                        print(
+                            f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received damaged!")
                         continue
+
+                    print(f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
                     fragments.append(rec_packet)
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
                     self.ack_num += rec_packet.seq_num + 1
                     continue
                 elif rec_packet.flags == Flags.FRP_LAST: # last fragmented package
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
+                        print(
+                            f"received last fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received damaged!")
                         continue
+                    print(
+                        f"received last fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
+
                     fragments.append(rec_packet)
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
                     self.ack_num += rec_packet.seq_num + 1
@@ -307,7 +286,6 @@ class Peer:
                     fragments = [] # empty fragmetns from older transfer if needed
 
                     file_to_receive_metadata = rec_packet.data
-                    fragment_count_to_receive = file_to_receive_metadata.decode().split(":")[2]
                     transfer_start_time = time.time()
 
                     print(f"\n< Received file transfer request for '{file_to_receive_metadata.decode()}' >")
@@ -315,30 +293,29 @@ class Peer:
                     continue
                 elif rec_packet.flags == Flags.FILE:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
+                        print(f"received file fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received damaged!")
                         corrupted_packages += 1
                         continue
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
+                    print(f"received file fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
 
                     fragments.append(rec_packet)
-
-                    progress = (rec_packet.identification * 100 / int(fragment_count_to_receive))
-                    current_percentage = int(progress)
-                    if current_percentage // 5 > last_printed_percentage:
-                        print("##", end='', flush=True)
-                        last_printed_percentage = current_percentage // 5
-
                     continue
                 elif rec_packet.flags == Flags.LAST_FILE:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
+                        print(
+                            f"received file fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received damaged!")
                         corrupted_packages += 1
                         continue
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
                     fragments.append(rec_packet)
-
                     self.enable_input.set()
-
+                    print(
+                        f"received file fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
+                    data_size = file_to_receive_metadata.decode().split(":")[1]
                     print(f"\n\nAll packages received in {time.time() - transfer_start_time:.2f} seconds \n"
-                          f"{corrupted_packages}/{len(fragments)} packages lost\n")
+                          f"{corrupted_packages}/{len(fragments)} packages lost\n"
+                          f"Size of received file: {data_size} bytes")
                     print("Enter desired path to save file: ")
 
                     # start thread to merge fragments together but do not block main program
@@ -348,7 +325,6 @@ class Peer:
                     merge_file_fragments_thread.start()
                     # reset variables
                     fragments = []
-                    last_printed_percentage = -1
                     continue
 
 
@@ -359,7 +335,6 @@ class Peer:
     def merge_file_fragments(self, file_to_receive_metadata, fragments):
         self.enable_input.set() # unfreeze input
         self.direct_input_to_main_control.clear() # turn off input for main functionality to receive data here
-
         while True:
             save_path = self.command_queue.get()
             if os.path.isdir(save_path):
@@ -367,17 +342,13 @@ class Peer:
                 break # Exit the loop if the path exists
             else:
                 print("File path does not exist. Please enter valid path again.")
-
         merged_file = b''
         for fragment in fragments: merged_file += fragment.data
         file_name, file_size, num_fragments = file_to_receive_metadata.decode().split(":")
         file_path = os.path.join(save_path, file_name)
-
         with open(file_path, 'wb') as f:
             f.write(merged_file)
-
         print(f"File \"{file_name}\" saved to: {file_path}")
-
         self.direct_input_to_main_control.set() # direct messages again to main input handler
         return
 
@@ -386,10 +357,8 @@ class Peer:
         Functions.info_menu()  # show menu
         self.enable_input.set()
         self.direct_input_to_main_control.set()
-        
         while True:
             self.enable_input.wait() # wait untill can input again
-
             command = input()
             self.command_queue.put(command)
 
@@ -422,7 +391,6 @@ class Peer:
                 global FRAGMENT_SIZE
                 print("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
                 print(f"Fragment size is currently set to {FRAGMENT_SIZE}")
-
                 print("Enter 'q' for quit   or    enter new fragment limit (or 'MAX' to set max fragments possible): ")
                 new_limit = self.command_queue.get()
                 if new_limit == 'q':
@@ -448,8 +416,6 @@ class Peer:
                         continue
             else:
                 print("invalid command")
-
-
 
 if __name__ == '__main__':
 
@@ -499,18 +465,3 @@ if __name__ == '__main__':
     send_thread.start()
 
     peer.receive_data()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

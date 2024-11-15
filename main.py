@@ -327,7 +327,6 @@ class Peer:
                     fragments = []
                     continue
 
-
             except socket.timeout:
                 continue
 

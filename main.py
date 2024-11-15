@@ -11,7 +11,7 @@ from Packet import Packet
 from Functions import Functions
 from Flags import Flags
 
-FRAGMENT_SIZE = 1457
+FRAGMENT_SIZE = 10
 MAX_FRAGMENT_SIZE = 1457 # Ethernet-IP Header-UDP Header-Custom Protocol Header = 1500−20−8-15 = 1457
 
 class Peer:
@@ -117,7 +117,7 @@ class Peer:
                                          flags=fragment_flag, data=fragment)
                 with self.queue_lock: self.data_queue.append(fragment_packet)
 
-        print(f"\nFile '{file_name}' enqueued with {num_fragments} fragments.")
+        # print(f"\nFile '{file_name}' enqueued with {num_fragments} fragments.")
         return
 
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False):
@@ -147,8 +147,10 @@ class Peer:
         return
 #### SENDING AND RECEIVING #############################################################################################
     def send_data_from_queue(self): # is in send_thread thread
-        fragment_count_to_send = 100
+        fragment_count_to_send = 0
         last_printed_percentage = -1
+        fragment_count_to_receive = ""
+        frp_size = 0
 
         while True:
             if not self.data_queue: # if queue is empty, do nothing
@@ -159,9 +161,14 @@ class Peer:
             packet_to_send.seq_num = self.seq_num # set current seq
             packet_to_send.ack_num = self.ack_num # set current ack
 
+            # data for printing
             if packet_to_send.flags == Flags.F_INFO:
+                fragment_count_to_receive = packet_to_send.data.decode()
                 fragment_count_to_send = packet_to_send.data.decode().split(":")[2]
                 print(f"\n\n0%  - - 25%  - - 50%  - - 75%  - -  100%    (packets sent)")
+            if packet_to_send.flags == Flags.FRP:
+                fragment_count_to_send += 1
+                frp_size += len(packet_to_send.data)
 
 
             ######## send the packet ##########################
@@ -185,6 +192,7 @@ class Peer:
             if self.received_ack.wait(timeout=5.0):
 
                 ###### print sending status if sending file ######
+
                 if packet_to_send.flags == Flags.FILE:
                     progress = (packet_to_send.identification * 100 / int(fragment_count_to_send))
                     current_percentage = int(progress)
@@ -192,8 +200,16 @@ class Peer:
                         print("##", end='', flush=True)
                         last_printed_percentage = current_percentage // 5
                 if packet_to_send.flags == Flags.LAST_FILE:
-                    print(f"\n\nSending succesfuly completed! \n")
+                    # print(f"\n\nSending succesfuly completed! \n")
+                    file_name = fragment_count_to_receive.split(":")[0]
+                    file_size = fragment_count_to_receive.split(":")[1]
+                    print(f"\n\nFile '{file_name}' was sent successfully. \nSize: {file_size}B. \nFragments send:{fragment_count_to_send} "
+                          f"\nFragment size: {FRAGMENT_SIZE}B \nLast fragment size: {len(packet_to_send.data)}")
                     last_printed_percentage = -1
+                if packet_to_send.flags == Flags.FRP_LAST:
+                    print(f"\nFragmented message was sent successfully. \nSize: {frp_size + len(packet_to_send)}B. \nFragments send:{fragment_count_to_send+1} "
+                        f"\nFragment size: {FRAGMENT_SIZE}B \nLast fragment size: {len(packet_to_send.data)}")
+                    fragment_count_to_send = 0
 
                 # print("Ack received")
                 self.seq_num += len(packet_to_send.data)
@@ -344,7 +360,7 @@ class Peer:
 
         while True:
             save_path = self.command_queue.get()
-            if os.path.exists(save_path):
+            if os.path.isdir(save_path):
                 print("~~ saving file, please wait ~~")
                 break # Exit the loop if the path exists
             else:
@@ -390,7 +406,7 @@ class Peer:
                 print("\n>>>>> Sent >>>>>>>")
                 message = self.command_queue.get()
                 print(">>>>> Sent >>>>>>>\n")
-                self.enqueue_message(message)
+                self.enqueue_message(message=message)
                 continue
             if choice == "f": # file
                 print("Enter file path")

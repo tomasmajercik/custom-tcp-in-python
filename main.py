@@ -173,7 +173,7 @@ class Peer:
 
             ######## send the packet ##########################
             self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
-            # print(f"sent: {packet_to_send.flags}")
+            print(f"sent: {packet_to_send.flags}")
 
 
             #### flags that do not need to be acknowledged ####
@@ -207,9 +207,10 @@ class Peer:
                           f"\nFragment size: {FRAGMENT_SIZE}B \nLast fragment size: {len(packet_to_send.data)}")
                     last_printed_percentage = -1
                 if packet_to_send.flags == Flags.FRP_LAST:
-                    print(f"\nFragmented message was sent successfully. \nSize: {frp_size + len(packet_to_send)}B. \nFragments send:{fragment_count_to_send+1} "
+                    print(f"\nFragmented message was sent successfully. \nSize: {frp_size + len(packet_to_send.data)}B. \nFragments send:{fragment_count_to_send+1} "
                         f"\nFragment size: {FRAGMENT_SIZE}B \nLast fragment size: {len(packet_to_send.data)}")
                     fragment_count_to_send = 0
+                    frp_size = 0
 
                 # print("Ack received")
                 self.seq_num += len(packet_to_send.data)
@@ -248,6 +249,7 @@ class Peer:
                 # receive data
                 packet_data, addr = self.receiving_socket.recvfrom(1500)
                 rec_packet = Packet.deconcatenate(packet_data)
+                print(f"rec: {rec_packet.flags}")
 
                 ####### rec. ACK #######################################################################################
                 if rec_packet.flags == Flags.ACK: # and rec_packet.ack_num == self.seq_num + 1: - if want to check seq/ack
@@ -256,18 +258,18 @@ class Peer:
                     # print("ack received")
                     continue
                 ####### FRagmented Packet ##############################################################################
-                if rec_packet.flags == Flags.FRP:
+                elif rec_packet.flags == Flags.FRP:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
                         continue
                     fragments.append(rec_packet)
-                    self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True) # send ack
+                    self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
                     self.ack_num += rec_packet.seq_num + 1
                     continue
-                if rec_packet.flags == Flags.FRP_LAST: # last fragmented package
+                elif rec_packet.flags == Flags.FRP_LAST: # last fragmented package
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
                         continue
                     fragments.append(rec_packet)
-                    self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True) # send ack
+                    self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
                     self.ack_num += rec_packet.seq_num + 1
                     message, number_of_fragments = Functions.rebuild_fragmented_message(fragments)
                     print(f"\n<<<< Received <<<<\n{message.decode()} (message was Received as "
@@ -275,33 +277,33 @@ class Peer:
                     fragments = [] # reset fragments
                     continue
                 ####### Change Fragment Limit ##########################################################################
-                if rec_packet.flags == Flags.CFL:
+                elif rec_packet.flags == Flags.CFL:
                     global FRAGMENT_SIZE
                     old_limit = FRAGMENT_SIZE
-                    self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True) # send ack
+                    self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
                     FRAGMENT_SIZE = int(rec_packet.data.decode())
                     print("\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
                     print(f"Other peer has just changed fragmentation limit from {old_limit} to {FRAGMENT_SIZE}")
                     print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
                     continue
                 ####### Ordinary messages ##############################################################################
-                if rec_packet.flags == Flags.NONE: # is an ordinary message
+                elif rec_packet.flags == Flags.NONE: # is an ordinary message
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
                         continue
 
                     print(f"\n\n<<<< Received <<<<\n{rec_packet.data.decode()} \n<<<< Received <<<< \n")
                     #### send ACK to signal data were received correctly
                     self.ack_num = rec_packet.seq_num + len(rec_packet.data)
-                    self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True) # send ack
+                    self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
                     continue
                 ####### File handling ##################################################################################
-                if rec_packet.flags == Flags.F_INFO:
+                elif rec_packet.flags == Flags.F_INFO:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
                         corrupted_packages += 1
                         continue
 
                     self.enable_input.clear()
-                    self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
+                    self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
                     fragments = [] # empty fragmetns from older transfer if needed
 
                     file_to_receive_metadata = rec_packet.data
@@ -311,11 +313,11 @@ class Peer:
                     print(f"\n< Received file transfer request for '{file_to_receive_metadata.decode()}' >")
                     print(f"\n\n0%  - - 25%  - - 50%  - - 75%  - -  100%    (packets received)")
                     continue
-                if rec_packet.flags == Flags.FILE:
+                elif rec_packet.flags == Flags.FILE:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
                         corrupted_packages += 1
                         continue
-                    self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
+                    self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
 
                     fragments.append(rec_packet)
 
@@ -326,11 +328,11 @@ class Peer:
                         last_printed_percentage = current_percentage // 5
 
                     continue
-                if rec_packet.flags == Flags.LAST_FILE:
+                elif rec_packet.flags == Flags.LAST_FILE:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
                         corrupted_packages += 1
                         continue
-                    self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
+                    self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
                     fragments.append(rec_packet)
 
                     self.enable_input.set()

@@ -3,6 +3,7 @@ import queue
 import socket
 import random
 import threading
+import time
 
 from collections import deque
 
@@ -147,6 +148,8 @@ class Peer:
 #### SENDING AND RECEIVING #############################################################################################
     def send_data_from_queue(self): # is in send_thread thread
         fragment_count_to_send = 100
+        last_printed_percentage = -1
+
         while True:
             if not self.data_queue: # if queue is empty, do nothing
                 continue
@@ -156,22 +159,42 @@ class Peer:
             packet_to_send.seq_num = self.seq_num # set current seq
             packet_to_send.ack_num = self.ack_num # set current ack
 
-            ####### STOP & WAIT ########################################################################################
+            if packet_to_send.flags == Flags.F_INFO:
+                fragment_count_to_send = packet_to_send.data.decode().split(":")[2]
+                print(f"\n\n0%  - - 25%  - - 50%  - - 75%  - -  100%    (packets sent)")
+
 
             ######## send the packet ##########################
-
             self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
             # print(f"sent: {packet_to_send.flags}")
 
+
+            #### flags that do not need to be acknowledged ####
             if packet_to_send.flags in {Flags.ACK}:
                 with self.queue_lock: self.data_queue.popleft()
                 continue
 
+            #### Threading locking mechanism ####
+            if packet_to_send.flags == Flags.F_INFO or packet_to_send.flags == Flags.FRP:
+                self.enable_input.clear() # if we send F_INFO, lock the input
+            if packet_to_send.flags == Flags.LAST_FILE or packet_to_send.flags == Flags.FRP_LAST:
+                self.enable_input.set() # unlock the input if not sending
+
+            ####### STOP & WAIT ########################################################################################
             self.received_ack.clear()
             if self.received_ack.wait(timeout=5.0):
-                if packet_to_send.flags == Flags.F_INFO:
-                    fragment_count_to_send = packet_to_send.data.decode().split(":")[2]
-                print(f"Sent fragment - completed {(packet_to_send.identification * 100 / int(fragment_count_to_send)):.2f}%")
+
+                ###### print sending status if sending file ######
+                if packet_to_send.flags == Flags.FILE:
+                    progress = (packet_to_send.identification * 100 / int(fragment_count_to_send))
+                    current_percentage = int(progress)
+                    if current_percentage // 5 > last_printed_percentage:
+                        print("##", end='', flush=True)
+                        last_printed_percentage = current_percentage // 5
+                if packet_to_send.flags == Flags.LAST_FILE:
+                    print(f"\n\nSending succesfuly completed! \n")
+                    last_printed_percentage = -1
+
                 # print("Ack received")
                 self.seq_num += len(packet_to_send.data)
                 with self.queue_lock:
@@ -195,6 +218,11 @@ class Peer:
     def receive_data(self): # is NOT in thread so the program can terminate later
         fragments = [] # array to store received fragments
         file_to_receive_metadata = ""
+        fragment_count_to_receive = 100
+        last_printed_percentage = -1
+
+        transfer_start_time = None
+        corrupted_packages = 0
 
         # set timeout for waiting
         self.receiving_socket.settimeout(2.0)
@@ -253,27 +281,46 @@ class Peer:
                 ####### File handling ##################################################################################
                 if rec_packet.flags == Flags.F_INFO:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
+                        corrupted_packages += 1
                         continue
 
                     self.enable_input.clear()
                     self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
                     fragments = [] # empty fragmetns from older transfer if needed
+
                     file_to_receive_metadata = rec_packet.data
+                    fragment_count_to_receive = file_to_receive_metadata.decode().split(":")[2]
+                    transfer_start_time = time.time()
+
                     print(f"\n< Received file transfer request for '{file_to_receive_metadata.decode()}' >")
+                    print(f"\n\n0%  - - 25%  - - 50%  - - 75%  - -  100%    (packets received)")
                     continue
                 if rec_packet.flags == Flags.FILE:
-                    # if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
-                    #     continue
+                    if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
+                        corrupted_packages += 1
+                        continue
                     self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
+
                     fragments.append(rec_packet)
+
+                    progress = (rec_packet.identification * 100 / int(fragment_count_to_receive))
+                    current_percentage = int(progress)
+                    if current_percentage // 5 > last_printed_percentage:
+                        print("##", end='', flush=True)
+                        last_printed_percentage = current_percentage // 5
+
                     continue
                 if rec_packet.flags == Flags.LAST_FILE:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
+                        corrupted_packages += 1
                         continue
                     self.enqueue_message("ack", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
                     fragments.append(rec_packet)
 
                     self.enable_input.set()
+
+                    print(f"\n\nAll packages received in {time.time() - transfer_start_time:.2f} seconds \n"
+                          f"{corrupted_packages}/{len(fragments)} packages lost\n")
                     print("Enter desired path to save file: ")
 
                     # start thread to merge fragments together but do not block main program
@@ -281,7 +328,9 @@ class Peer:
                                                                    args=(file_to_receive_metadata, fragments))
                     merge_file_fragments_thread.daemon = True
                     merge_file_fragments_thread.start()
+                    # reset variables
                     fragments = []
+                    last_printed_percentage = -1
                     continue
 
 

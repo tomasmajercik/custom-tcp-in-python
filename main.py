@@ -205,7 +205,7 @@ class Peer:
                 self.terminate_listening = True
                 return
 
-            # if packet_to_send.flags == Flags.KAL or packet_to_send.flags == Flags.KAL_ACK:
+            # if packet_to_send.flags == Flags.KAL:# or packet_to_send.flags == Flags.KAL_ACK:
             #     print("som idiotsky kal")
 
             #### flags that do not need to be acknowledged ####
@@ -249,7 +249,7 @@ class Peer:
                 continue
             else:
                 while True:
-                    print("\n!ACK not received, resending packet! \n")
+                    print("!ACK not received, resending packet!")
                     self.do_keep_alive.set()
 
                     self.received_ack.clear()

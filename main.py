@@ -34,6 +34,7 @@ class Peer:
         self.received_ack = threading.Event()
         self.enable_input = threading.Event()
         self.direct_input_to_main_control = threading.Event()
+        self.terminate_listening = False
 
 #### HANDSHAKE #########################################################################################################
     def handshake(self):
@@ -133,6 +134,7 @@ class Peer:
         last_printed_percentage = -1
         fragment_count_to_receive = ""
         frp_size = 0
+        terminate_connection = False
 
         while True:
             if not self.data_queue: # if queue is empty, do nothing
@@ -156,8 +158,19 @@ class Peer:
             self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
             # print(f"sent: {packet_to_send.flags}")
 
+            #### TERMINATION ##################################
+            if packet_to_send.flags == Flags.TER:
+                print(f"\n\n1. Sent TER - starting termination of connection")
+                terminate_connection = True
+            elif packet_to_send.flags == Flags.TER_ACK:
+                print("2. Sent TER/ACK - termination is about to finish")
+            elif packet_to_send.flags == Flags.ACK and terminate_connection:
+                print("3. Sent ACK - connection ended")
+                self.terminate_listening = True
+                return
+
             #### flags that do not need to be acknowledged ####
-            if packet_to_send.flags in {Flags.ACK}:
+            if packet_to_send.flags in {Flags.ACK, Flags.TER, Flags.TER_ACK}:
                 with self.queue_lock: self.data_queue.popleft()
                 continue
 
@@ -212,10 +225,11 @@ class Peer:
         file_to_receive_metadata = ""
         transfer_start_time = None
         corrupted_packages = 0
+        terminate_connection = False
 
         # set timeout for waiting
         self.receiving_socket.settimeout(2.0)
-        while True:
+        while not self.terminate_listening:
             try:
                 # receive data
                 packet_data, addr = self.receiving_socket.recvfrom(1500)
@@ -226,7 +240,20 @@ class Peer:
                     self.received_ack.set() # this stays only in this if
                     self.ack_num = rec_packet.seq_num + 1
                     # print("ack received")
-                    continue
+                    if terminate_connection:
+                        print("3. Received ACK - connection ended")
+                        return
+                    else: continue
+                ####### TERMINATON #####################################################################################
+                elif rec_packet.flags == Flags.TER:
+                    print("\n\n1. Received TER - starting termination of connection")
+                    self.ack_num = rec_packet.seq_num + 1
+                    self.enqueue_message(flags_to_send=Flags.TER_ACK, push_to_front=True)
+                    terminate_connection = True
+                elif rec_packet.flags == Flags.TER_ACK:
+                    print("2. Received TER/ACK - termination is about to finish")
+                    self.ack_num = rec_packet.seq_num + 1
+                    self.enqueue_message(flags_to_send=Flags.ACK, push_to_front=True)
                 ####### FRagmented Packet ##############################################################################
                 elif rec_packet.flags == Flags.FRP:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
@@ -413,6 +440,9 @@ class Peer:
                         print("Invalid input. Please enter a number, 'MAX', or 'q' to quit.")
                         print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
                         continue
+            if choice == "!q" or "quit":
+                self.enqueue_message(flags_to_send=Flags.TER, push_to_front=True)
+                return
             else:
                 print("invalid command")
 

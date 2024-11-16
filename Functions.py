@@ -5,7 +5,7 @@ class Functions:
     @staticmethod
     def info_menu():
         print("MENU:")
-        print("'m' for message | 'f' for file | 'cfl' for info or change fragmentation size | '!q / !quit' for quit")
+        print("'m' for message | 'f' for file | 'cfl' for info or change fragmentation size \n'!q / quit' to quit | help/man for menu")
 
     @staticmethod
     def calc_checksum(data):

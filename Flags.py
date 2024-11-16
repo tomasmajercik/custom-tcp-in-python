@@ -10,8 +10,8 @@ class Flags:
     FRP = 0b1000 #8
     FRP_LAST = 0b1010 #10
     #
-    # KAL = 0b1001
-    # KAL_ACK = 0b1011
+    KAL = 0b1001
+    KAL_ACK = 0b1011
     #
     TER = 0b1100
     TER_ACK = 0b1110

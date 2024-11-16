@@ -11,7 +11,7 @@ from Packet import Packet
 from Functions import Functions
 from Flags import Flags
 
-FRAGMENT_SIZE = 10
+FRAGMENT_SIZE = 1457
 MAX_FRAGMENT_SIZE = 1457 # Ethernet-IP Header-UDP Header-Custom Protocol Header = 1500−20−8-15 = 1457
 
 class Peer:
@@ -35,8 +35,12 @@ class Peer:
         self.enable_input = threading.Event()
         self.direct_input_to_main_control = threading.Event()
         self.terminate_listening = False
+        # kal threading variables
+        self.communication_ongoing = threading.Event()
+        self.successful_kal_delivery = threading.Event()
+        self.do_keep_alive = threading.Event()
 
-#### HANDSHAKE #########################################################################################################
+#### Connection control ################################################################################################
     def handshake(self):
         max_retries = 15
         retries = 0
@@ -79,6 +83,36 @@ class Peer:
         print(f"Handshake timeout after {max_retries} retries")
         self.receiving_socket.close()
         return False
+    def manage_keep_alive(self):
+        self.communication_ongoing.set()
+        kal_delivery_error = 0
+        delay = random.uniform(2, 5)
+        time.sleep(delay)
+
+        while True:
+            self.do_keep_alive.wait()
+            # print("SOM STRASIDLO")
+            if self.communication_ongoing.is_set():
+                self.communication_ongoing.clear()
+                time.sleep(5)
+            else: # peer send nothing and received nothing
+                self.successful_kal_delivery.clear()
+                self.enqueue_message(flags_to_send=Flags.KAL)
+
+                delivery = self.successful_kal_delivery.wait(timeout=5)
+                if delivery:
+                    if kal_delivery_error > 0:
+                        print("✓ Peer is back online, communication continues ✓")
+                    kal_delivery_error = 0
+                elif not delivery:
+                    kal_delivery_error += 1
+                    print(f"X Didn't receive KAL/ACK from other peer. (other peer disconnected?) X")
+
+                if kal_delivery_error == 3:
+                    print(f"\n!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
+                    return
+                time.sleep(5)
+
 
 #### ENQUEING ##########################################################################################################
     def enqueue_file(self, file_path):
@@ -105,7 +139,6 @@ class Peer:
                                          flags=fragment_flag, data=fragment)
                 with self.queue_lock: self.data_queue.append(fragment_packet)
         return
-
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False):
         if len(message) < FRAGMENT_SIZE:
             packet = Packet(identification=0, checksum=Functions.calc_checksum(message), flags=flags_to_send,data=message)
@@ -145,6 +178,9 @@ class Peer:
             packet_to_send.seq_num = self.seq_num # set current seq
             packet_to_send.ack_num = self.ack_num # set current ack
 
+            if packet_to_send.flags not in {Flags.KAL, Flags.KAL_ACK}:
+                self.communication_ongoing.set()
+
             # data for printing
             if packet_to_send.flags == Flags.F_INFO:
                 fragment_count_to_receive = packet_to_send.data.decode()
@@ -169,17 +205,21 @@ class Peer:
                 self.terminate_listening = True
                 return
 
+            # if packet_to_send.flags == Flags.KAL or packet_to_send.flags == Flags.KAL_ACK:
+            #     print("som idiotsky kal")
+
             #### flags that do not need to be acknowledged ####
-            if packet_to_send.flags in {Flags.ACK, Flags.TER, Flags.TER_ACK}:
+            if packet_to_send.flags in {Flags.ACK, Flags.TER, Flags.TER_ACK, Flags.KAL, Flags.KAL_ACK}:
                 with self.queue_lock: self.data_queue.popleft()
                 continue
 
             #### Threading locking mechanism ####
-            if packet_to_send.flags == Flags.F_INFO or packet_to_send.flags == Flags.FRP:
+            if packet_to_send.flags in {Flags.F_INFO, Flags.FRP}:
                 self.enable_input.clear() # if we send F_INFO, lock the input
-            if packet_to_send.flags == Flags.LAST_FILE or packet_to_send.flags == Flags.FRP_LAST:
+                self.do_keep_alive.clear()
+            if packet_to_send.flags in {Flags.LAST_FILE, Flags.FRP_LAST}:
                 self.enable_input.set() # unlock the input if not sending
-
+                self.do_keep_alive.clear()
             ####### STOP & WAIT ########################################################################################
             self.received_ack.clear()
             if self.received_ack.wait(timeout=5.0):
@@ -210,6 +250,8 @@ class Peer:
             else:
                 while True:
                     print("\n!ACK not received, resending packet! \n")
+                    self.do_keep_alive.set()
+
                     self.received_ack.clear()
                     self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
 
@@ -234,6 +276,10 @@ class Peer:
                 # receive data
                 packet_data, addr = self.receiving_socket.recvfrom(1500)
                 rec_packet = Packet.deconcatenate(packet_data)
+
+                if rec_packet.flags not in {Flags.KAL, Flags.KAL_ACK}:
+                    self.communication_ongoing.set()
+
                 # print(f"rec: {rec_packet.flags}")
                 ####### rec. ACK #######################################################################################
                 if rec_packet.flags == Flags.ACK: # and rec_packet.ack_num == self.seq_num + 1: - if want to check seq/ack
@@ -254,6 +300,12 @@ class Peer:
                     print("2. Received TER/ACK - termination is about to finish")
                     self.ack_num = rec_packet.seq_num + 1
                     self.enqueue_message(flags_to_send=Flags.ACK, push_to_front=True)
+                ####### TERMINATON #####################################################################################
+                elif rec_packet.flags == Flags.KAL:
+                    self.ack_num = rec_packet.seq_num + 1
+                    self.enqueue_message(flags_to_send=Flags.KAL_ACK, push_to_front=True)
+                elif rec_packet.flags == Flags.KAL_ACK:
+                    self.successful_kal_delivery.set()
                 ####### FRagmented Packet ##############################################################################
                 elif rec_packet.flags == Flags.FRP:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
@@ -309,6 +361,8 @@ class Peer:
                         continue
 
                     self.enable_input.clear()
+                    self.do_keep_alive.clear()
+
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
                     fragments = [] # empty fragmetns from older transfer if needed
 
@@ -337,6 +391,7 @@ class Peer:
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
                     fragments.append(rec_packet)
                     self.enable_input.set()
+                    self.do_keep_alive.clear()
                     print(
                         f"received file fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
                     data_size = file_to_receive_metadata.decode().split(":")[1]
@@ -356,10 +411,11 @@ class Peer:
 
             except socket.timeout:
                 continue
-
 #### FILE RECEIVING ####################################################################################################
     def merge_file_fragments(self, file_to_receive_metadata, fragments):
         self.enable_input.set() # unfreeze input
+        self.do_keep_alive.clear()
+
         self.direct_input_to_main_control.clear() # turn off input for main functionality to receive data here
         while True:
             save_path = self.command_queue.get()
@@ -377,17 +433,16 @@ class Peer:
         print(f"File \"{file_name}\" saved to: {file_path}")
         self.direct_input_to_main_control.set() # direct messages again to main input handler
         return
-
 #### PROGRAM CONTROL ###################################################################################################
     def input_handler(self):
         Functions.info_menu()  # show menu
         self.enable_input.set()
+        self.do_keep_alive.set()
         self.direct_input_to_main_control.set()
         while True:
             self.enable_input.wait() # wait untill can input again
             command = input()
             self.command_queue.put(command)
-
     def manage_user_input(self): # is in input_thread thread
         while True:
             self.enable_input.wait()
@@ -399,13 +454,13 @@ class Peer:
             if choice == "help" or choice == "man": # help / man
                 Functions.info_menu()
                 continue
-            if choice == "m": # message
+            elif choice == "m": # message
                 print("\n>>>>> Sent >>>>>>>")
                 message = self.command_queue.get()
                 print(">>>>> Sent >>>>>>>\n")
                 self.enqueue_message(message=message)
                 continue
-            if choice == "f": # file
+            elif choice == "f": # file
                 print("Enter file path")
                 file_path = self.command_queue.get()
                 if not os.path.exists(file_path):
@@ -413,7 +468,7 @@ class Peer:
                 else:
                     self.enqueue_file(file_path)
                 continue
-            if choice == "cfl": # change fragment limit
+            elif choice == "cfl": # change fragment limit
                 global FRAGMENT_SIZE
                 print("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
                 print(f"Fragment size is currently set to {FRAGMENT_SIZE}")
@@ -440,7 +495,7 @@ class Peer:
                         print("Invalid input. Please enter a number, 'MAX', or 'q' to quit.")
                         print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
                         continue
-            if choice == "!q" or "quit":
+            elif choice == "!q" or "quit":
                 self.enqueue_message(flags_to_send=Flags.TER, push_to_front=True)
                 return
             else:
@@ -481,16 +536,13 @@ if __name__ == '__main__':
         print(f"#  Starting data exchange\n")
 
 #### THREADS ###########################################################################################################
-    input_manage_thread = threading.Thread(target=peer.input_handler)
-    input_manage_thread.daemon = True
+    input_manage_thread = threading.Thread(target=peer.input_handler, daemon=True)
+    input_thread = threading.Thread(target=peer.manage_user_input, daemon=True)
+    send_thread = threading.Thread(target=peer.send_data_from_queue, daemon=True)
+    keep_alive_thread = threading.Thread(target=peer.manage_keep_alive, daemon=True)
+
     input_manage_thread.start()
-
-    input_thread = threading.Thread(target=peer.manage_user_input)
-    input_thread.daemon = True
     input_thread.start()
-
-    send_thread = threading.Thread(target=peer.send_data_from_queue)
-    send_thread.daemon = True
     send_thread.start()
-
+    keep_alive_thread.start()
     peer.receive_data()

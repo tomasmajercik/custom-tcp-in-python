@@ -167,8 +167,13 @@ class Peer:
                     fragment_flag = Flags.FRP_LAST
                 else:
                     fragment_flag = Flags.FRP
-                packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
-                                checksum=Functions.calc_checksum(fragment.encode()), flags=fragment_flag, data=fragment)
+
+                if fragment_flag == Flags.FRP_LAST and simulate_error:
+                    packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                                    checksum=0, flags=fragment_flag, data=fragment)
+                else:
+                    packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                                    checksum=Functions.calc_checksum(fragment.encode()), flags=fragment_flag, data=fragment)
                 with self.queue_lock:
                     self.data_queue.append(packet)
         return
@@ -231,6 +236,8 @@ class Peer:
             if packet_to_send.flags in {Flags.LAST_FILE, Flags.FRP_LAST}:
                 self.enable_input.set() # unlock the input if not sending
                 self.do_keep_alive.clear()
+                if packet_to_send.flags == Flags.FRP_LAST:
+                    print("Last fragment sent")
             ####### STOP & WAIT ########################################################################################
             self.received_ack.clear()
             if self.received_ack.wait(timeout=5.0):
@@ -326,8 +333,9 @@ class Peer:
                 elif rec_packet.flags == Flags.KAL_ACK:
                     self.successful_kal_delivery.set()
                 ####### FRagmented Packet ##############################################################################
-                elif rec_packet.flags == Flags.FRP:
+                elif rec_packet.flags == Flags.FRP or rec_packet.flags == Flags.FRP_LAST:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
+                        self.enqueue_message(flags_to_send=Flags.NACK, push_to_front=True)  # notify that message came currupted
                         print(
                             f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received damaged!")
                         continue
@@ -336,23 +344,30 @@ class Peer:
                     fragments.append(rec_packet)
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
                     self.ack_num += rec_packet.seq_num + 1
-                    continue
-                elif rec_packet.flags == Flags.FRP_LAST: # last fragmented package
-                    if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
-                        print(
-                            f"received last fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received damaged!")
-                        continue
-                    print(
-                        f"received last fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
 
-                    fragments.append(rec_packet)
-                    self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
-                    self.ack_num += rec_packet.seq_num + 1
-                    message, number_of_fragments = Functions.rebuild_fragmented_message(fragments)
-                    print(f"\n<<<< Received <<<<\n{message.decode()} (message was Received as "
-                          f"{number_of_fragments} fragments)\n<<<< Received <<<< \n")
-                    fragments = [] # reset fragments
+                    if rec_packet.flags == Flags.FRP_LAST:
+                        message, number_of_fragments = Functions.rebuild_fragmented_message(fragments)
+                        print(f"\n<<<< Received <<<<\n{message.decode()} (message was Received as "
+                              f"{number_of_fragments} fragments)\n<<<< Received <<<< \n")
+                        fragments = []  # reset fragments
                     continue
+                # elif rec_packet.flags == Flags.FRP_LAST: # last fragmented package
+                #     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
+                #         self.enqueue_message(flags_to_send=Flags.NACK, push_to_front=True)  # notify that message came currupted
+                #         print(
+                #             f"received last fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received damaged!")
+                #         continue
+                #     print(
+                #         f"received last fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
+                #
+                #     fragments.append(rec_packet)
+                #     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
+                #     self.ack_num += rec_packet.seq_num + 1
+                #     message, number_of_fragments = Functions.rebuild_fragmented_message(fragments)
+                #     print(f"\n<<<< Received <<<<\n{message.decode()} (message was Received as "
+                #           f"{number_of_fragments} fragments)\n<<<< Received <<<< \n")
+                #     fragments = [] # reset fragments
+                #     continue
                 ####### Change Fragment Limit ##########################################################################
                 elif rec_packet.flags == Flags.CFL:
                     global FRAGMENT_SIZE

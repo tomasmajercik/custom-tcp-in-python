@@ -99,6 +99,7 @@ class Peer:
                 self.successful_kal_delivery.clear()
                 self.enqueue_message(flags_to_send=Flags.KAL)
 
+                start_time = time.time()
                 delivery = self.successful_kal_delivery.wait(timeout=5)
                 if delivery:
                     if kal_delivery_error > 0:
@@ -110,10 +111,11 @@ class Peer:
 
                 if kal_delivery_error == 3:
                     print(f"\n!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
+                    self.terminate_listening = True
                     return
-                time.sleep(5)
-
-
+                elapsed_time = time.time() - start_time
+                remaining_time = max(0, 5 - int(elapsed_time))
+                time.sleep(remaining_time)
 #### ENQUEING ##########################################################################################################
     def enqueue_file(self, file_path):
         file_name = file_path.split("/")[-1]  # Extract file name from path
@@ -361,7 +363,7 @@ class Peer:
                         continue
 
                     self.enable_input.clear()
-                    self.do_keep_alive.clear()
+                    # self.do_keep_alive.clear()
 
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
                     fragments = [] # empty fragmetns from older transfer if needed
@@ -391,7 +393,7 @@ class Peer:
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
                     fragments.append(rec_packet)
                     self.enable_input.set()
-                    self.do_keep_alive.clear()
+                    # self.do_keep_alive.clear()
                     print(
                         f"received file fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
                     data_size = file_to_receive_metadata.decode().split(":")[1]

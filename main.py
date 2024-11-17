@@ -29,9 +29,11 @@ class Peer:
         self.receiving_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.receiving_socket.bind(self.id)
         self.send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # ACK/NACK management
+        self.received_ack = threading.Event()
+        self.received_NACK = threading.Event()
         # threading variables
         self.queue_lock = threading.Lock()
-        self.received_ack = threading.Event()
         self.enable_input = threading.Event()
         self.direct_input_to_main_control = threading.Event()
         self.terminate_listening = False
@@ -117,7 +119,7 @@ class Peer:
                 remaining_time = max(0, 5 - int(elapsed_time))
                 time.sleep(remaining_time)
 #### ENQUEING ##########################################################################################################
-    def enqueue_file(self, file_path):
+    def enqueue_file(self, file_path, simulate_error=False):
         file_name = file_path.split("/")[-1]  # Extract file name from path
         file_size = os.path.getsize(file_path)
         num_fragments = (file_size + FRAGMENT_SIZE - 1) // FRAGMENT_SIZE  # Calculate the total number of fragments
@@ -128,6 +130,9 @@ class Peer:
                                  flags=Flags.F_INFO, data=file_metadata)
         with self.queue_lock: self.data_queue.append(metadata_packet)
 
+        # if simulate error is on
+        corrupted_packet_id = random.randint(0, num_fragments - 1) if simulate_error else -1
+
         # 2. send file data in fragments
         with open(file_path, "rb") as f:
             for i in range(num_fragments):
@@ -136,12 +141,16 @@ class Peer:
                     break  # End of file reached
                 # If this is the last fragment, set the flag to LAST_FILE
                 fragment_flag = Flags.LAST_FILE if i == num_fragments - 1 else Flags.FILE
-                fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
-                                         checksum=Functions.calc_checksum(fragment),
-                                         flags=fragment_flag, data=fragment)
+
+                if corrupted_packet_id == i:
+                    fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                                             checksum=0, flags=fragment_flag, data=fragment)
+                else:
+                    fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                                             checksum=Functions.calc_checksum(fragment), flags=fragment_flag, data=fragment)
                 with self.queue_lock: self.data_queue.append(fragment_packet)
         return
-    def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False):
+    def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False, simulate_error=False):
         if len(message) < FRAGMENT_SIZE:
             packet = Packet(identification=0, checksum=Functions.calc_checksum(message), flags=flags_to_send,data=message)
             if push_to_front:
@@ -211,7 +220,7 @@ class Peer:
             #     print("som idiotsky kal")
 
             #### flags that do not need to be acknowledged ####
-            if packet_to_send.flags in {Flags.ACK, Flags.TER, Flags.TER_ACK, Flags.KAL, Flags.KAL_ACK}:
+            if packet_to_send.flags in {Flags.ACK, Flags.NACK, Flags.TER, Flags.TER_ACK, Flags.KAL, Flags.KAL_ACK}:
                 with self.queue_lock: self.data_queue.popleft()
                 continue
 
@@ -251,8 +260,14 @@ class Peer:
                 continue
             else:
                 while True:
-                    print("!ACK not received, resending packet!")
-                    self.do_keep_alive.set()
+                    if self.received_NACK.is_set():
+                        print("\n!!! Received NACK - resending packet !!!\n")
+                        # recauculate checksum
+                        packet_to_send.checksum = Functions.calc_checksum(packet_to_send.data)
+                        self.received_NACK.clear()
+                    else:
+                        print("!ACK not received, resending packet!")
+                        self.do_keep_alive.set()
 
                     self.received_ack.clear()
                     self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
@@ -283,7 +298,7 @@ class Peer:
                     self.communication_ongoing.set()
 
                 # print(f"rec: {rec_packet.flags}")
-                ####### rec. ACK #######################################################################################
+                ####### rec. ACK/NACK ##################################################################################
                 if rec_packet.flags == Flags.ACK: # and rec_packet.ack_num == self.seq_num + 1: - if want to check seq/ack
                     self.received_ack.set() # this stays only in this if
                     self.ack_num = rec_packet.seq_num + 1
@@ -292,6 +307,8 @@ class Peer:
                         print("3. Received ACK - connection ended")
                         return
                     else: continue
+                elif rec_packet.flags == Flags.NACK:
+                    self.received_NACK.set()
                 ####### TERMINATON #####################################################################################
                 elif rec_packet.flags == Flags.TER:
                     print("\n\n1. Received TER - starting termination of connection")
@@ -302,7 +319,7 @@ class Peer:
                     print("2. Received TER/ACK - termination is about to finish")
                     self.ack_num = rec_packet.seq_num + 1
                     self.enqueue_message(flags_to_send=Flags.ACK, push_to_front=True)
-                ####### TERMINATON #####################################################################################
+                ####### Keep Alive #####################################################################################
                 elif rec_packet.flags == Flags.KAL:
                     self.ack_num = rec_packet.seq_num + 1
                     self.enqueue_message(flags_to_send=Flags.KAL_ACK, push_to_front=True)
@@ -360,10 +377,10 @@ class Peer:
                 elif rec_packet.flags == Flags.F_INFO:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
                         corrupted_packages += 1
+                        self.enqueue_message(flags_to_send=Flags.NACK, push_to_front=True)  # notify that message came currupted
                         continue
 
                     self.enable_input.clear()
-                    # self.do_keep_alive.clear()
 
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
                     fragments = [] # empty fragmetns from older transfer if needed
@@ -378,6 +395,7 @@ class Peer:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
                         print(f"received file fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received damaged!")
                         corrupted_packages += 1
+                        self.enqueue_message(flags_to_send=Flags.NACK, push_to_front=True) # notify that message came currupted
                         continue
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
                     print(f"received file fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
@@ -389,6 +407,7 @@ class Peer:
                         print(
                             f"received file fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received damaged!")
                         corrupted_packages += 1
+                        self.enqueue_message(flags_to_send=Flags.NACK, push_to_front=True)  # notify that message came currupted
                         continue
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
                     fragments.append(rec_packet)
@@ -456,19 +475,21 @@ class Peer:
             if choice == "help" or choice == "man": # help / man
                 Functions.info_menu()
                 continue
-            elif choice == "m": # message
+            elif choice == "m" or choice == "ErrM": # message
                 print("\n>>>>> Sent >>>>>>>")
                 message = self.command_queue.get()
                 print(">>>>> Sent >>>>>>>\n")
-                self.enqueue_message(message=message)
+                if choice == "ErrM": self.enqueue_message(message=message, simulate_error=True)
+                else: self.enqueue_message(message=message)
                 continue
-            elif choice == "f": # file
+            elif choice == "f" or choice == "ErrF": # file
                 print("Enter file path")
                 file_path = self.command_queue.get()
                 if not os.path.exists(file_path):
                     print("This path does not exist. Please enter valid one.")
                 else:
-                    self.enqueue_file(file_path)
+                    if choice == "ErrF": self.enqueue_file(file_path, simulate_error=True)
+                    else: self.enqueue_file(file_path)
                 continue
             elif choice == "cfl": # change fragment limit
                 global FRAGMENT_SIZE
@@ -497,7 +518,7 @@ class Peer:
                         print("Invalid input. Please enter a number, 'MAX', or 'q' to quit.")
                         print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
                         continue
-            elif choice == "!q" or "quit":
+            elif choice == "!q" or choice == "quit":
                 self.enqueue_message(flags_to_send=Flags.TER, push_to_front=True)
                 return
             else:

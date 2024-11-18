@@ -4,8 +4,16 @@ class Functions:
 
     @staticmethod
     def info_menu():
+        print("\n*************************************")
         print("MENU:")
-        print("'m' for message | 'f' for file | 'cfl' for info or change fragmentation size \n'!q / quit' to quit | help/man for menu")
+        print("'m' to send message\n"
+              "'f' to send file\n"
+              "'cfl' to check fragmentation size or change it \n"
+              "'!q or quit' to quit\n"
+              "'ErrM' to simulate error while sending message in fragments\n"
+              "'ErrF' to simulate error while sending files in fragments\n"
+              "'help/man' for menu")
+        print("*************************************\n")
 
     @staticmethod
     def calc_checksum(data):

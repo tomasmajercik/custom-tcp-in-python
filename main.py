@@ -151,7 +151,7 @@ class Peer:
                 with self.queue_lock: self.data_queue.append(fragment_packet)
         return
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False, simulate_error=False):
-        if len(message) < FRAGMENT_SIZE:
+        if len(message) <= FRAGMENT_SIZE:
             packet = Packet(identification=0, checksum=Functions.calc_checksum(message), flags=flags_to_send,data=message)
             if push_to_front:
                 with self.queue_lock:
@@ -160,7 +160,7 @@ class Peer:
                 with self.queue_lock:
                     self.data_queue.append(packet)
 
-        elif len(message) >= FRAGMENT_SIZE:  # split data to be sent into multiple fragments if needed
+        elif len(message) > FRAGMENT_SIZE:  # split data to be sent into multiple fragments if needed
             fragments = [message[i:i + FRAGMENT_SIZE] for i in range(0, len(message), FRAGMENT_SIZE)]
             for i, fragment in enumerate(fragments):
                 if i == len(fragments) - 1:  # if it is last fragment, mark it with FRP/ACK
@@ -471,13 +471,13 @@ class Peer:
         return
 #### PROGRAM CONTROL ###################################################################################################
     def input_handler(self):
-        Functions.info_menu()  # show menu
+        print("If you don't know what you can do, enter 'help' or 'man'")
         self.enable_input.set()
         self.do_keep_alive.set()
         self.direct_input_to_main_control.set()
         while True:
             self.enable_input.wait() # wait untill can input again
-            command = input()
+            command = input().strip()
             self.command_queue.put(command)
     def manage_user_input(self): # is in input_thread thread
         while True:
@@ -520,8 +520,8 @@ class Peer:
                         new_limit = str(MAX_FRAGMENT_SIZE)
                     try:
                         new_limit = int(new_limit)  # Try converting input to an integer
-                        if new_limit > MAX_FRAGMENT_SIZE:
-                            print(f"Cannot change fragmentation limit above {MAX_FRAGMENT_SIZE}.")
+                        if new_limit > MAX_FRAGMENT_SIZE or new_limit < 1:
+                            print(f"Cannot change fragmentation limit to {new_limit}.")
                             print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
                             continue
                         else:
@@ -557,13 +557,13 @@ if __name__ == '__main__':
     MY_IP = "localhost"
     whos_this = input("peer one (1) or peer two (2): ")
     if whos_this == "1":
-        PEERS_IP = "localhost"
-        PEER_LISTEN_PORT = 8000
-        PEER_SEND_PORT = 7000
+       PEERS_IP = "localhost"
+       PEER_LISTEN_PORT = 8000
+       PEER_SEND_PORT = 7000
     else:
-        PEERS_IP = "localhost"
-        PEER_LISTEN_PORT = 7000
-        PEER_SEND_PORT = 8000
+       PEERS_IP = "localhost"
+       PEER_LISTEN_PORT = 7000
+       PEER_SEND_PORT = 8000
 
     peer = Peer(MY_IP, PEERS_IP, PEER_LISTEN_PORT, PEER_SEND_PORT)
 #### HANDSHAKE #########################################################################################################

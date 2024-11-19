@@ -31,6 +31,7 @@ class Peer:
         self.send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # ACK/NACK management
         self.received_ack = threading.Event()
+        self.received_nack = threading.Event()
         self.received_NACK = threading.Event()
         # threading variables
         self.queue_lock = threading.Lock()
@@ -241,7 +242,7 @@ class Peer:
                     print("Last fragment sent")
             ####### STOP & WAIT ########################################################################################
             self.received_ack.clear()
-            if self.received_ack.wait(timeout=5.0):
+            if self.received_ack.wait(timeout=5.0): # or self.received_nack.wait(timeout=5.0): hh
                 ###### print sending status if sending file ######
                 if packet_to_send.flags == Flags.FILE:
                     progress = (packet_to_send.identification * 100 / int(fragment_count_to_send))
@@ -545,29 +546,29 @@ class Peer:
 
 if __name__ == '__main__':
 
-    MY_IP = input("Enter YOUR IP address: ")
-    PEERS_IP = input("Enter PEER's IP address: ")
-    PEER_SEND_PORT = int(input("Enter your send port (should be the same as second's peer listening port): "))
-    PEER_LISTEN_PORT = int(input("Enter your listening port (should be the same as second's peer sending port): "))
-    
-    if MY_IP < PEERS_IP: start_handshake = True
-    elif MY_IP==PEERS_IP:
-        if PEER_LISTEN_PORT > PEER_SEND_PORT:
-            start_handshake = True
-        else:
-            start_handshake = False
-    else: start_handshake = False
+    # MY_IP = input("Enter YOUR IP address: ")
+    # PEERS_IP = input("Enter PEER's IP address: ")
+    # PEER_SEND_PORT = int(input("Enter your send port (should be the same as second's peer listening port): "))
+    # PEER_LISTEN_PORT = int(input("Enter your listening port (should be the same as second's peer sending port): "))
+    #
+    # if MY_IP < PEERS_IP: start_handshake = True
+    # elif MY_IP==PEERS_IP:
+    #     if PEER_LISTEN_PORT > PEER_SEND_PORT:
+    #         start_handshake = True
+    #     else:
+    #         start_handshake = False
+    # else: start_handshake = False
 
-    #MY_IP = "localhost"
-    #whos_this = input("peer one (1) or peer two (2): ")
-    #if whos_this == "1":
-    #   PEERS_IP = "localhost"
-    #   PEER_LISTEN_PORT = 8000
-    #   PEER_SEND_PORT = 7000
-    #else:
-    #   PEERS_IP = "localhost"
-    #   PEER_LISTEN_PORT = 7000
-    #   PEER_SEND_PORT = 8000
+    MY_IP = "localhost"
+    whos_this = input("peer one (1) or peer two (2): ")
+    if whos_this == "1":
+      PEERS_IP = "localhost"
+      PEER_LISTEN_PORT = 8000
+      PEER_SEND_PORT = 7000
+    else:
+      PEERS_IP = "localhost"
+      PEER_LISTEN_PORT = 7000
+      PEER_SEND_PORT = 8000
 
     peer = Peer(MY_IP, PEERS_IP, PEER_LISTEN_PORT, PEER_SEND_PORT)
 #### HANDSHAKE #########################################################################################################

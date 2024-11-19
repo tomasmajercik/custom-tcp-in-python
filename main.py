@@ -243,6 +243,12 @@ class Peer:
             ####### STOP & WAIT ########################################################################################
             self.received_ack.clear()
             if self.received_ack.wait(timeout=5.0): # or self.received_nack.wait(timeout=5.0): hh
+                if self.received_NACK.is_set():
+                    print("\n!!! Received NACK - resending packet !!!\n")
+                    # recauculate checksum
+                    packet_to_send.checksum = Functions.calc_checksum(packet_to_send.data)
+                    self.received_NACK.clear()
+                    continue
                 ###### print sending status if sending file ######
                 if packet_to_send.flags == Flags.FILE:
                     progress = (packet_to_send.identification * 100 / int(fragment_count_to_send))
@@ -318,6 +324,7 @@ class Peer:
                     else: continue
                 elif rec_packet.flags == Flags.NACK:
                     self.received_NACK.set()
+                    self.received_ack.set()
                 ####### TERMINATON #####################################################################################
                 elif rec_packet.flags == Flags.TER:
                     print("\n\n1. Received TER - starting termination of connection")
@@ -338,6 +345,7 @@ class Peer:
                 elif rec_packet.flags == Flags.FRP or rec_packet.flags == Flags.FRP_LAST:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
                         self.enqueue_message(flags_to_send=Flags.NACK, push_to_front=True)  # notify that message came currupted
+
                         print(
                             f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received damaged!")
                         continue

@@ -46,5 +46,5 @@ class Functions:
         if received_checksum == Functions.calc_checksum(received_message):
             return True
         else:
-            print("checksum does not match - message corrupted")
+            print("\nChecksum does not match - message corrupted")
             return False

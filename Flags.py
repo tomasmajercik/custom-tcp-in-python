@@ -1,4 +1,5 @@
 class Flags:
+
     NONE = 0b0000 #0
     ACK = 0b0010 #2
     NACK = 0b1101

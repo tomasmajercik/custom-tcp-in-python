@@ -13,7 +13,6 @@ class Packet:
         # Ensure data is bytes - if already in bytes, let it be, if not (is a string), encode it using utf-8
         self.data = data if isinstance(data, bytes) else data.encode('utf-8')
 
-
     def concatenate(self):
         header = struct.pack(self.HEADER_FORMAT, self.seq_num, self.ack_num, self.identification, self.checksum,
                              self.flags)

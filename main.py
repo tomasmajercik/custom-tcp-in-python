@@ -237,7 +237,8 @@ class Peer:
                 self.do_keep_alive.clear()
             if packet_to_send.flags in {Flags.LAST_FILE, Flags.FRP_LAST}:
                 self.enable_input.set() # unlock the input if not sending
-                self.do_keep_alive.clear()
+                # self.do_keep_alive.clear() #???
+                self.do_keep_alive.set()
                 if packet_to_send.flags == Flags.FRP_LAST:
                     print("Last fragment sent")
             ####### STOP & WAIT ########################################################################################
@@ -300,6 +301,7 @@ class Peer:
         transfer_start_time = None
         corrupted_packages = 0
         terminate_connection = False
+        prev_received_identification = 1
 
         # set timeout for waiting
         self.receiving_socket.settimeout(2.0)
@@ -350,6 +352,7 @@ class Peer:
                             f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received damaged!")
                         continue
 
+                    self.communication_ongoing.set()
                     print(f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
                     fragments.append(rec_packet)
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
@@ -360,6 +363,7 @@ class Peer:
                         print(f"\n<<<< Received <<<<\n{message.decode()} (message was Received as "
                               f"{number_of_fragments} fragments)\n<<<< Received <<<< \n")
                         fragments = []  # reset fragments
+                    self.communication_ongoing.clear()
                     continue
                 # elif rec_packet.flags == Flags.FRP_LAST: # last fragmented package
                 #     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
@@ -424,7 +428,11 @@ class Peer:
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
                     print(f"received file fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
 
-                    fragments.append(rec_packet)
+                    if prev_received_identification != rec_packet.identification:
+                        fragments.append(rec_packet)
+                    else: print("bububu")
+                    prev_received_identification = rec_packet.identification
+
                     continue
                 elif rec_packet.flags == Flags.LAST_FILE:
                     if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
@@ -477,6 +485,7 @@ class Peer:
             f.write(merged_file)
         print(f"File \"{file_name}\" saved to: {file_path}")
         self.direct_input_to_main_control.set() # direct messages again to main input handler
+        self.do_keep_alive.set()
         return
 #### PROGRAM CONTROL ###################################################################################################
     def input_handler(self):

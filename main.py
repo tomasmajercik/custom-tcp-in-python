@@ -192,44 +192,45 @@ class Peer:
                 continue
 
             ######## prepare the package #######################
-            packet_to_send = self.data_queue[0] # take first from queue
-            packet_to_send.seq_num = self.seq_num # set current seq
-            packet_to_send.ack_num = self.ack_num # set current ack
+            with self.queue_lock:
+                packet_to_send = self.data_queue[0] # take first from queue
+                packet_to_send.seq_num = self.seq_num # set current seq
+                packet_to_send.ack_num = self.ack_num # set current ack
 
-            if packet_to_send.flags not in {Flags.KAL, Flags.KAL_ACK}:
-                self.communication_ongoing.set()
+                if packet_to_send.flags not in {Flags.KAL, Flags.KAL_ACK}:
+                    self.communication_ongoing.set()
 
-            # data for printing
-            if packet_to_send.flags == Flags.F_INFO:
-                fragment_count_to_receive = packet_to_send.data.decode()
-                fragment_count_to_send = packet_to_send.data.decode().split(":")[2]
-                print(f"\n\n0%  - - 25%  - - 50%  - - 75%  - -  100%    (packets sent)")
-            if packet_to_send.flags == Flags.FRP:
-                fragment_count_to_send += 1
-                frp_size += len(packet_to_send.data)
+                # data for printing
+                if packet_to_send.flags == Flags.F_INFO:
+                    fragment_count_to_receive = packet_to_send.data.decode()
+                    fragment_count_to_send = packet_to_send.data.decode().split(":")[2]
+                    print(f"\n\n0%  - - 25%  - - 50%  - - 75%  - -  100%    (packets sent)")
+                if packet_to_send.flags == Flags.FRP:
+                    fragment_count_to_send += 1
+                    frp_size += len(packet_to_send.data)
 
-            ######## send the packet ##########################
-            self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
-            # print(f"sent: {packet_to_send.flags}")
+                ######## send the packet ##########################
+                self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
+                # print(f"sent: {packet_to_send.flags}")
 
-            #### TERMINATION ##################################
-            if packet_to_send.flags == Flags.TER:
-                print(f"\n\n1. Sent TER - starting termination of connection")
-                terminate_connection = True
-            elif packet_to_send.flags == Flags.TER_ACK:
-                print("2. Sent TER/ACK - termination is about to finish")
-            elif packet_to_send.flags == Flags.ACK and terminate_connection:
-                print("3. Sent ACK - connection ended")
-                self.terminate_listening = True
-                return
+                #### TERMINATION ##################################
+                if packet_to_send.flags == Flags.TER:
+                    print(f"\n\n1. Sent TER - starting termination of connection")
+                    terminate_connection = True
+                elif packet_to_send.flags == Flags.TER_ACK:
+                    print("2. Sent TER/ACK - termination is about to finish")
+                elif packet_to_send.flags == Flags.ACK and terminate_connection:
+                    print("3. Sent ACK - connection ended")
+                    self.terminate_listening = True
+                    return
 
-            # if packet_to_send.flags == Flags.KAL:# or packet_to_send.flags == Flags.KAL_ACK:
-            #     print("som idiotsky kal")
+                # if packet_to_send.flags == Flags.KAL:# or packet_to_send.flags == Flags.KAL_ACK:
+                #     print("som idiotsky kal")
 
-            #### flags that do not need to be acknowledged ####
-            if packet_to_send.flags in {Flags.ACK, Flags.NACK, Flags.TER, Flags.TER_ACK, Flags.KAL, Flags.KAL_ACK}:
-                with self.queue_lock: self.data_queue.popleft()
-                continue
+                #### flags that do not need to be acknowledged ####
+                if packet_to_send.flags in {Flags.ACK, Flags.NACK, Flags.TER, Flags.TER_ACK, Flags.KAL, Flags.KAL_ACK}:
+                    self.data_queue.popleft()
+                    continue
 
             #### Threading locking mechanism ####
             if packet_to_send.flags in {Flags.F_INFO, Flags.FRP}:

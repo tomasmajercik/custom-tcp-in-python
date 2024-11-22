@@ -130,6 +130,7 @@ class Peer:
         metadata_packet = Packet(self.seq_num, self.ack_num, checksum=Functions.calc_checksum(file_metadata),
                                  flags=Flags.F_INFO, data=file_metadata)
         self.do_keep_alive.clear()
+        print(f"Sending file {file_path}")
         with self.queue_lock: self.data_queue.append(metadata_packet)
 
         # if simulate error is on
@@ -207,6 +208,7 @@ class Peer:
                 if packet_to_send.flags == Flags.F_INFO:
                     fragment_count_to_receive = packet_to_send.data.decode()
                     fragment_count_to_send = packet_to_send.data.decode().split(":")[2]
+                    print()
                     print(f"\n\n0%  - - 25%  - - 50%  - - 75%  - -  100%    (packets sent)")
                 if packet_to_send.flags == Flags.FRP:
                     fragment_count_to_send += 1
@@ -241,10 +243,8 @@ class Peer:
                 self.do_keep_alive.clear()
             if packet_to_send.flags in {Flags.LAST_FILE, Flags.FRP_LAST}:
                 self.enable_input.set() # unlock the input if not sending
-                # self.do_keep_alive.clear() #???
                 self.do_keep_alive.set()
-                if packet_to_send.flags == Flags.FRP_LAST:
-                    print("Last fragment sent")
+                if packet_to_send.flags == Flags.FRP_LAST: print("Last fragment sent")
             ####### STOP & WAIT ########################################################################################
             self.received_ack.clear()
             if self.received_ack.wait(timeout=5.0): # or self.received_nack.wait(timeout=5.0): hh
@@ -358,7 +358,10 @@ class Peer:
 
                     self.communication_ongoing.set()
                     print(f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
-                    fragments.append(rec_packet)
+                    if prev_received_identification != rec_packet.identification:
+                        fragments.append(rec_packet)
+                    prev_received_identification = rec_packet.identification
+
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
                     self.ack_num += rec_packet.seq_num + 1
 
@@ -367,6 +370,7 @@ class Peer:
                         print(f"\n<<<< Received <<<<\n{message.decode()} (message was Received as "
                               f"{number_of_fragments} fragments)\n<<<< Received <<<< \n")
                         fragments = []  # reset fragments
+                        prev_received_identification = 1
                     self.communication_ongoing.clear()
                     continue
                 ####### Change Fragment Limit ##########################################################################
@@ -418,7 +422,6 @@ class Peer:
 
                     if prev_received_identification != rec_packet.identification:
                         fragments.append(rec_packet)
-                    else: print("bububu")
                     prev_received_identification = rec_packet.identification
 
                     continue
@@ -553,8 +556,8 @@ if __name__ == '__main__':
 
     # MY_IP = input("Enter YOUR IP address: ")
     # PEERS_IP = input("Enter PEER's IP address: ")
-    # PEER_SEND_PORT = int(input("Enter your send port (should be the same as second's peer listening port): "))
-    # PEER_LISTEN_PORT = int(input("Enter your listening port (should be the same as second's peer sending port): "))
+    # PEER_SEND_PORT = int(input("Enter your send port: "))
+    # PEER_LISTEN_PORT = int(input("Enter your listening port:"))
     #
     # if MY_IP < PEERS_IP: start_handshake = True
     # elif MY_IP==PEERS_IP:

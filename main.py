@@ -39,7 +39,6 @@ class Peer:
         self.direct_input_to_main_control = threading.Event()
         self.terminate_listening = False
         # kal threading variables
-        self.communication_ongoing = threading.Event()
         self.successful_kal_delivery = threading.Event()
         self.do_keep_alive = threading.Event()
 
@@ -87,38 +86,35 @@ class Peer:
         self.receiving_socket.close()
         return False
     def manage_keep_alive(self):
-        self.communication_ongoing.set()
         kal_delivery_error = 0
         delay = random.uniform(2, 5)
         time.sleep(delay)
 
         while True:
             self.do_keep_alive.wait()
-            # print("SOM STRASIDLO")
-            if self.communication_ongoing.is_set():
-                self.communication_ongoing.clear()
-                time.sleep(5)
-            else: # peer send nothing and received nothing
-                self.successful_kal_delivery.clear()
-                self.enqueue_message(flags_to_send=Flags.KAL)
+            # print("bububu")
+            self.successful_kal_delivery.clear()
+            self.enqueue_message(flags_to_send=Flags.KAL, push_to_front=True)
 
-                start_time = time.time()
-                delivery = self.successful_kal_delivery.wait(timeout=5)
-                if delivery:
-                    if kal_delivery_error > 0:
-                        print("✓ Peer is back online, communication continues ✓")
-                    kal_delivery_error = 0
-                elif not delivery:
-                    kal_delivery_error += 1
-                    print(f"X Didn't receive KAL/ACK from other peer. (other peer disconnected?) X")
+            # start_time = time.time()
+            delivery = self.successful_kal_delivery.wait(timeout=5)
+            if delivery:
+                if kal_delivery_error > 0:
+                    print("✓ Peer is back online, communication continues ✓")
+                kal_delivery_error = 0
+            elif not delivery:
+                kal_delivery_error += 1
+                print(f"X Didn't receive KAL/ACK from other peer. (other peer disconnected?) X")
 
-                if kal_delivery_error == 3:
-                    print(f"\n!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
-                    self.terminate_listening = True
-                    return
-                elapsed_time = time.time() - start_time
-                remaining_time = max(0, 5 - int(elapsed_time))
-                time.sleep(remaining_time)
+            if kal_delivery_error == 3:
+                print(f"\n!! NOT RECEIVED KEEP ALIVE FROM OTHER PEER FOR {kal_delivery_error} TIMES, EXITING CODE")
+                self.terminate_listening = True
+                return
+
+            time.sleep(5)
+            # elapsed_time = time.time() - start_time
+            # remaining_time = max(0, 5 - int(elapsed_time))
+            # time.sleep(remaining_time)
 #### ENQUEING ##########################################################################################################
     def enqueue_file(self, file_path, simulate_error=False):
         file_name = file_path.split("/")[-1]  # Extract file name from path
@@ -192,7 +188,7 @@ class Peer:
         terminate_connection = False
 
         while True:
-            if not self.data_queue: # if queue is empty, do nothing
+            if not self.data_queue: # if queue is empty, start keep alive
                 continue
 
             ######## prepare the package #######################
@@ -201,8 +197,8 @@ class Peer:
                 packet_to_send.seq_num = self.seq_num # set current seq
                 packet_to_send.ack_num = self.ack_num # set current ack
 
-                if packet_to_send.flags not in {Flags.KAL, Flags.KAL_ACK, Flags.ACK}:
-                    self.communication_ongoing.set()
+                if not packet_to_send.flags in {Flags.KAL, Flags.KAL_ACK}:
+                    self.do_keep_alive.clear()
 
                 # data for printing
                 if packet_to_send.flags == Flags.F_INFO:
@@ -229,8 +225,6 @@ class Peer:
                     self.terminate_listening = True
                     return
 
-                # if packet_to_send.flags == Flags.KAL:# or packet_to_send.flags == Flags.KAL_ACK:
-                #     print("som idiotsky kal")
 
                 #### flags that do not need to be acknowledged ####
                 if packet_to_send.flags in {Flags.ACK, Flags.NACK, Flags.TER, Flags.TER_ACK, Flags.KAL, Flags.KAL_ACK}:
@@ -240,11 +234,9 @@ class Peer:
             #### Threading locking mechanism ####
             if packet_to_send.flags in {Flags.F_INFO, Flags.FRP}:
                 self.enable_input.clear() # if we send F_INFO, lock the input
-                self.do_keep_alive.clear()
             if packet_to_send.flags in {Flags.LAST_FILE, Flags.FRP_LAST}:
                 self.enable_input.set() # unlock the input if not sending
-                self.do_keep_alive.set()
-                if packet_to_send.flags == Flags.FRP_LAST: print("Last fragment sent")
+            if packet_to_send.flags == Flags.FRP_LAST: print("Last fragment sent")
             ####### STOP & WAIT ########################################################################################
             self.received_ack.clear()
             if self.received_ack.wait(timeout=5.0): # or self.received_nack.wait(timeout=5.0): hh
@@ -279,6 +271,7 @@ class Peer:
                     self.data_queue.popleft()
                 continue
             else:
+                self.do_keep_alive.set()
                 while True:
                     if self.received_NACK.is_set():
                         print("\n!!! Received NACK - resending packet !!!\n")
@@ -287,7 +280,6 @@ class Peer:
                         self.received_NACK.clear()
                     else:
                         print("!ACK not received, resending packet!")
-                        self.do_keep_alive.set()
 
                     self.received_ack.clear()
                     self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
@@ -315,8 +307,10 @@ class Peer:
                 packet_data, addr = self.receiving_socket.recvfrom(1500)
                 rec_packet = Packet.deconcatenate(packet_data)
 
+
                 if rec_packet.flags not in {Flags.KAL, Flags.KAL_ACK, Flags.ACK}:
-                    self.communication_ongoing.set()
+                    # print("daco som dostal")
+                    self.do_keep_alive.clear()
 
                 # print(f"rec: {rec_packet.flags}")
                 ####### rec. ACK/NACK ##################################################################################
@@ -355,8 +349,6 @@ class Peer:
                         print(
                             f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received damaged!\n")
                         continue
-
-                    self.communication_ongoing.set()
                     print(f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
                     if prev_received_identification != rec_packet.identification:
                         fragments.append(rec_packet)
@@ -371,7 +363,6 @@ class Peer:
                               f"{number_of_fragments} fragments)\n<<<< Received <<<< \n")
                         fragments = []  # reset fragments
                         prev_received_identification = 1
-                    self.communication_ongoing.clear()
                     continue
                 ####### Change Fragment Limit ##########################################################################
                 elif rec_packet.flags == Flags.CFL:
@@ -435,7 +426,6 @@ class Peer:
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
                     fragments.append(rec_packet)
                     self.enable_input.set()
-                    # self.do_keep_alive.clear()
                     print(
                         f"received file fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
                     data_size = file_to_receive_metadata.decode().split(":")[1]
@@ -454,6 +444,8 @@ class Peer:
                     continue
 
             except socket.timeout:
+                # print("nic som nedostal")
+                self.do_keep_alive.set()
                 continue
 #### FILE RECEIVING ####################################################################################################
     def merge_file_fragments(self, file_to_receive_metadata, fragments):
@@ -483,7 +475,6 @@ class Peer:
         print("If you don't know what you can do, enter 'help' or 'man'")
         print("\n~$ ", end='', flush=True)
         self.enable_input.set()
-        self.do_keep_alive.set()
         self.direct_input_to_main_control.set()
         while True:
             self.enable_input.wait() # wait untill can input again

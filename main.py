@@ -92,11 +92,10 @@ class Peer:
 
         while True:
             self.do_keep_alive.wait()
-            # print("bububu")
             self.successful_kal_delivery.clear()
             self.enqueue_message(flags_to_send=Flags.KAL, push_to_front=True)
 
-            # start_time = time.time()
+            start_time = time.time()
             delivery = self.successful_kal_delivery.wait(timeout=5)
             if delivery:
                 if kal_delivery_error > 0:
@@ -111,10 +110,9 @@ class Peer:
                 self.terminate_listening = True
                 return
 
-            time.sleep(5)
-            # elapsed_time = time.time() - start_time
-            # remaining_time = max(0, 5 - int(elapsed_time))
-            # time.sleep(remaining_time)
+            elapsed_time = time.time() - start_time
+            remaining_time = max(0, 5 - int(elapsed_time))
+            time.sleep(remaining_time)
 #### ENQUEING ##########################################################################################################
     def enqueue_file(self, file_path, simulate_error=False):
         file_name = file_path.split("/")[-1]  # Extract file name from path
@@ -225,7 +223,6 @@ class Peer:
                     self.terminate_listening = True
                     return
 
-
                 #### flags that do not need to be acknowledged ####
                 if packet_to_send.flags in {Flags.ACK, Flags.NACK, Flags.TER, Flags.TER_ACK, Flags.KAL, Flags.KAL_ACK}:
                     self.data_queue.popleft()
@@ -307,12 +304,10 @@ class Peer:
                 packet_data, addr = self.receiving_socket.recvfrom(1500)
                 rec_packet = Packet.deconcatenate(packet_data)
 
-
                 if rec_packet.flags not in {Flags.KAL, Flags.KAL_ACK, Flags.ACK}:
                     # print("daco som dostal")
                     self.do_keep_alive.clear()
 
-                # print(f"rec: {rec_packet.flags}")
                 ####### rec. ACK/NACK ##################################################################################
                 if rec_packet.flags == Flags.ACK: # and rec_packet.ack_num == self.seq_num + 1: - if want to check seq/ack
                     self.received_ack.set() # this stays only in this if

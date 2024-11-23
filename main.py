@@ -13,6 +13,7 @@ from Flags import Flags
 
 FRAGMENT_SIZE = 1457
 MAX_FRAGMENT_SIZE = 1457 # Ethernet-IP Header-UDP Header-Custom Protocol Header = 1500−20−8-15 = 1457
+kal_delivery_error = 0
 
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
@@ -86,7 +87,7 @@ class Peer:
         self.receiving_socket.close()
         return False
     def manage_keep_alive(self):
-        kal_delivery_error = 0
+        global kal_delivery_error
         delay = random.uniform(2, 5)
         time.sleep(delay)
 
@@ -197,19 +198,24 @@ class Peer:
 
                 if not packet_to_send.flags in {Flags.KAL, Flags.KAL_ACK}:
                     self.do_keep_alive.clear()
+                    global kal_delivery_error
+                    kal_delivery_error = 0
 
                 # data for printing
                 if packet_to_send.flags == Flags.F_INFO:
                     fragment_count_to_receive = packet_to_send.data.decode()
                     fragment_count_to_send = packet_to_send.data.decode().split(":")[2]
                     print()
-                    print(f"\n\n0%  - - 25%  - - 50%  - - 75%  - -  100%    (packets sent)")
+                    print(f"\n\n   0%  - - 25%  - - 50%  - - 75%  - -  100%    (packets sent)")
                 if packet_to_send.flags == Flags.FRP:
                     fragment_count_to_send += 1
                     frp_size += len(packet_to_send.data)
 
                 ######## send the packet ##########################
-                self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
+                try:
+                    self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
+                except OSError:
+                    continue
                 # print(f"sent: {packet_to_send.flags}")
 
                 #### TERMINATION ##################################
@@ -297,7 +303,7 @@ class Peer:
         prev_received_identification = 1
 
         # set timeout for waiting
-        self.receiving_socket.settimeout(2.0)
+        self.receiving_socket.settimeout(5.0)
         while not self.terminate_listening:
             try:
                 # receive data
@@ -442,6 +448,8 @@ class Peer:
                 # print("nic som nedostal")
                 self.do_keep_alive.set()
                 continue
+            except OSError:
+                continue
 #### FILE RECEIVING ####################################################################################################
     def merge_file_fragments(self, file_to_receive_metadata, fragments):
         self.enable_input.set() # unfreeze input
@@ -455,8 +463,11 @@ class Peer:
                 break # Exit the loop if the path exists
             else:
                 print("File path does not exist. Please enter valid path again.")
+
+        sorted_fragments = sorted(fragments, key=lambda frag: frag.identification)
+
         merged_file = b''
-        for fragment in fragments: merged_file += fragment.data
+        for fragment in sorted_fragments: merged_file += fragment.data
         file_name, file_size, num_fragments = file_to_receive_metadata.decode().split(":")
         file_path = os.path.join(save_path, file_name)
         with open(file_path, 'wb') as f:
@@ -517,7 +528,7 @@ class Peer:
                             new_limit = str(MAX_FRAGMENT_SIZE)
                         try:
                             new_limit = int(new_limit)  # Try converting input to an integer
-                            if new_limit > MAX_FRAGMENT_SIZE or new_limit <= 1:
+                            if new_limit > MAX_FRAGMENT_SIZE or new_limit < 1:
                                 print(f"Cannot change fragmentation limit to {new_limit}.")
                                 print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
                                 continue
@@ -540,29 +551,29 @@ class Peer:
 
 if __name__ == '__main__':
 
-    # MY_IP = input("Enter YOUR IP address: ")
-    # PEERS_IP = input("Enter PEER's IP address: ")
-    # PEER_SEND_PORT = int(input("Enter your send port: "))
-    # PEER_LISTEN_PORT = int(input("Enter your listening port:"))
-    #
-    # if MY_IP < PEERS_IP: start_handshake = True
-    # elif MY_IP==PEERS_IP:
-    #     if PEER_LISTEN_PORT > PEER_SEND_PORT:
-    #         start_handshake = True
-    #     else:
-    #         start_handshake = False
-    # else: start_handshake = False
+    MY_IP = input("Enter YOUR IP address: ")
+    PEERS_IP = input("Enter PEER's IP address: ")
+    PEER_SEND_PORT = int(input("Enter your send port: "))
+    PEER_LISTEN_PORT = int(input("Enter your listening port:"))
+    
+    if MY_IP < PEERS_IP: start_handshake = True
+    elif MY_IP==PEERS_IP:
+        if PEER_LISTEN_PORT > PEER_SEND_PORT:
+            start_handshake = True
+        else:
+            start_handshake = False
+    else: start_handshake = False
 
-    MY_IP = "localhost"
-    whos_this = input("peer one (1) or peer two (2): ")
-    if whos_this == "1":
-      PEERS_IP = "localhost"
-      PEER_LISTEN_PORT = 8000
-      PEER_SEND_PORT = 7000
-    else:
-      PEERS_IP = "localhost"
-      PEER_LISTEN_PORT = 7000
-      PEER_SEND_PORT = 8000
+    #MY_IP = "localhost"
+    #whos_this = input("peer one (1) or peer two (2): ")
+    #if whos_this == "1":
+    #  PEERS_IP = "localhost"
+    #  PEER_LISTEN_PORT = 8000
+    #  PEER_SEND_PORT = 7000
+    #else:
+    #  PEERS_IP = "localhost"
+    #  PEER_LISTEN_PORT = 7000
+    #  PEER_SEND_PORT = 8000
 
     peer = Peer(MY_IP, PEERS_IP, PEER_LISTEN_PORT, PEER_SEND_PORT)
 #### HANDSHAKE #########################################################################################################

@@ -11,8 +11,8 @@ from Packet import Packet
 from Functions import Functions
 from Flags import Flags
 
-FRAGMENT_SIZE = 1457
-MAX_FRAGMENT_SIZE = 1457 # Ethernet-IP Header-UDP Header-Custom Protocol Header = 1500−20−8-15 = 1457
+FRAGMENT_SIZE = 1443
+MAX_FRAGMENT_SIZE = 1443 # Ethernet-IP Header-UDP Header-Custom Protocol Header = 1500−20−8-15 = 1457
 kal_delivery_error = 0
 
 class Peer:
@@ -285,7 +285,10 @@ class Peer:
                         print("!ACK not received, resending packet!")
 
                     self.received_ack.clear()
-                    self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
+                    try:
+                        self.send_socket.sendto(packet_to_send.concatenate(), self.peer_address)
+                    except OSError:
+                        pass
 
                     if self.received_ack.wait(timeout=5.0):
                         # print("Ack received")
@@ -353,6 +356,7 @@ class Peer:
                     print(f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
                     if prev_received_identification != rec_packet.identification:
                         fragments.append(rec_packet)
+                        if rec_packet.identification == 1: transfer_start_time = time.time()
                     prev_received_identification = rec_packet.identification
 
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
@@ -360,8 +364,9 @@ class Peer:
 
                     if rec_packet.flags == Flags.FRP_LAST:
                         message, number_of_fragments = Functions.rebuild_fragmented_message(fragments)
-                        print(f"\n<<<< Received <<<<\n{message.decode()} (message was Received as "
-                              f"{number_of_fragments} fragments)\n<<<< Received <<<< \n")
+
+                        print(f"\n<<<< Received <<<<\n{message.decode()} (message of {len(message)} bytes was Received as "
+                              f"{number_of_fragments} fragments in {time.time() - transfer_start_time:.2f} seconds)\n<<<< Received <<<< \n")
                         fragments = []  # reset fragments
                         prev_received_identification = 1
                     continue
@@ -550,12 +555,11 @@ class Peer:
                 print("\n~$ ", end='', flush=True)
 
 if __name__ == '__main__':
-
     MY_IP = input("Enter YOUR IP address: ")
     PEERS_IP = input("Enter PEER's IP address: ")
     PEER_SEND_PORT = int(input("Enter your send port: "))
     PEER_LISTEN_PORT = int(input("Enter your listening port:"))
-    
+
     if MY_IP < PEERS_IP: start_handshake = True
     elif MY_IP==PEERS_IP:
         if PEER_LISTEN_PORT > PEER_SEND_PORT:
@@ -564,13 +568,14 @@ if __name__ == '__main__':
             start_handshake = False
     else: start_handshake = False
 
-    #MY_IP = "localhost"
-    #whos_this = input("peer one (1) or peer two (2): ")
-    #if whos_this == "1":
+    ## FOR LOCALHOST TESTING
+    # MY_IP = "localhost"
+    # whos_this = input("peer one (1) or peer two (2): ")
+    # if whos_this == "1":
     #  PEERS_IP = "localhost"
     #  PEER_LISTEN_PORT = 8000
     #  PEER_SEND_PORT = 7000
-    #else:
+    # else:
     #  PEERS_IP = "localhost"
     #  PEER_LISTEN_PORT = 7000
     #  PEER_SEND_PORT = 8000
@@ -582,7 +587,6 @@ if __name__ == '__main__':
         exit()
     else:
         print(f"#  Starting data exchange\n")
-
 #### THREADS ###########################################################################################################
     input_manage_thread = threading.Thread(target=peer.input_handler, daemon=True)
     input_thread = threading.Thread(target=peer.manage_user_input, daemon=True)

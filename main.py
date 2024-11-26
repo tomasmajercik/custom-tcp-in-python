@@ -132,6 +132,7 @@ class Peer:
         corrupted_packet_id = random.randint(0, num_fragments - 1) if simulate_error else -1
 
         # 2. send file data in fragments
+        fragments = []
         with open(file_path, "rb") as f:
             for i in range(num_fragments):
                 fragment = f.read(FRAGMENT_SIZE)
@@ -142,11 +143,20 @@ class Peer:
 
                 if corrupted_packet_id == i:
                     fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
-                                             checksum=0, flags=fragment_flag, data=fragment)
+                                         checksum=0, flags=Flags.FILE, data=fragment)
                 else:
                     fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
-                                             checksum=Functions.calc_checksum(fragment), flags=fragment_flag, data=fragment)
-                with self.queue_lock: self.data_queue.append(fragment_packet)
+                                         checksum=Functions.calc_checksum(fragment), flags=Flags.FILE, data=fragment)
+                # with self.queue_lock: self.data_queue.append(fragment_packet)
+                fragments.append(fragment_packet)
+
+        fragments.reverse()
+        with self.queue_lock:
+            for i, frag in enumerate(fragments, start=0):
+                frag.identification = i
+                if i == num_fragments-1:
+                    frag.flags = Flags.LAST_FILE
+                self.data_queue.append(frag)
         return
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False, simulate_error=False):
         if len(message) <= FRAGMENT_SIZE:
@@ -162,6 +172,9 @@ class Peer:
 
         elif len(message) > FRAGMENT_SIZE:  # split data to be sent into multiple fragments if needed
             fragments = [message[i:i + FRAGMENT_SIZE] for i in range(0, len(message), FRAGMENT_SIZE)]
+
+            fragments.reverse()
+
             random_corrupted_packet_id = random.randint(0, len(fragments) - 1) if simulate_error else -1
             for i, fragment in enumerate(fragments):
                 if i == len(fragments) - 1:  # if it is last fragment, mark it with FRP/ACK
@@ -470,6 +483,7 @@ class Peer:
                 print("File path does not exist. Please enter valid path again.")
 
         sorted_fragments = sorted(fragments, key=lambda frag: frag.identification)
+        sorted_fragments.reverse()
 
         merged_file = b''
         for fragment in sorted_fragments: merged_file += fragment.data
@@ -555,30 +569,22 @@ class Peer:
                 print("\n~$ ", end='', flush=True)
 
 if __name__ == '__main__':
-    MY_IP = input("Enter YOUR IP address: ")
-    PEERS_IP = input("Enter PEER's IP address: ")
-    PEER_SEND_PORT = int(input("Enter your send port: "))
-    PEER_LISTEN_PORT = int(input("Enter your listening port:"))
+    # MY_IP = input("Enter YOUR IP address: ")
+    # PEERS_IP = input("Enter PEER's IP address: ")
+    # PEER_SEND_PORT = int(input("Enter your send port: "))
+    # PEER_LISTEN_PORT = int(input("Enter your listening port:"))
 
-    if MY_IP < PEERS_IP: start_handshake = True
-    elif MY_IP==PEERS_IP:
-        if PEER_LISTEN_PORT > PEER_SEND_PORT:
-            start_handshake = True
-        else:
-            start_handshake = False
-    else: start_handshake = False
-
-    ## FOR LOCALHOST TESTING
-    # MY_IP = "localhost"
-    # whos_this = input("peer one (1) or peer two (2): ")
-    # if whos_this == "1":
-    #  PEERS_IP = "localhost"
-    #  PEER_LISTEN_PORT = 8000
-    #  PEER_SEND_PORT = 7000
-    # else:
-    #  PEERS_IP = "localhost"
-    #  PEER_LISTEN_PORT = 7000
-    #  PEER_SEND_PORT = 8000
+    # FOR LOCALHOST TESTING
+    MY_IP = "localhost"
+    whos_this = input("peer one (1) or peer two (2): ")
+    if whos_this == "1":
+     PEERS_IP = "localhost"
+     PEER_LISTEN_PORT = 8000
+     PEER_SEND_PORT = 7000
+    else:
+     PEERS_IP = "localhost"
+     PEER_LISTEN_PORT = 7000
+     PEER_SEND_PORT = 8000
 
     peer = Peer(MY_IP, PEERS_IP, PEER_LISTEN_PORT, PEER_SEND_PORT)
 #### HANDSHAKE #########################################################################################################

@@ -26,10 +26,15 @@ class Functions:
 
     @staticmethod
     def rebuild_fragmented_message(fragments):
+        datas = []
+        for fragment in fragments:
+            datas.append(fragment.data)
+        datas.reverse()
+
         full_message = b''
         expeted_id = fragments[0].identification
 
-        for fragment in fragments:
+        for i, fragment in enumerate(fragments):
             if fragment.checksum != Functions.calc_checksum(fragment.data):
                 print("Error: Checksum mismatch in fragment.")
                 return None
@@ -37,7 +42,7 @@ class Functions:
             if fragment.identification != expeted_id:
                 print("Error: Identification mismatch in fragment.")
 
-            full_message += fragment.data
+            full_message += datas[i]
             expeted_id += 1
         return full_message, expeted_id
 

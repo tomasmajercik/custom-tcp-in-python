@@ -132,13 +132,14 @@ class Peer:
         corrupted_packet_id = random.randint(0, num_fragments - 1) if simulate_error else -1
 
         # 2. send file data in fragments
+        i = 0
         with open(file_path, "rb") as f:
-            for i in range(num_fragments):
-                fragment = f.read(FRAGMENT_SIZE)
+            for _ in range(num_fragments*5):
+                if i%5==0: fragment = f.read(FRAGMENT_SIZE)
                 if not fragment:
                     break  # End of file reached
                 # If this is the last fragment, set the flag to LAST_FILE
-                fragment_flag = Flags.LAST_FILE if i == num_fragments - 1 else Flags.FILE
+                fragment_flag = Flags.LAST_FILE if i == num_fragments*5 - 1 else Flags.FILE
 
                 if corrupted_packet_id == i:
                     fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
@@ -147,6 +148,7 @@ class Peer:
                     fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
                                              checksum=Functions.calc_checksum(fragment), flags=fragment_flag, data=fragment)
                 with self.queue_lock: self.data_queue.append(fragment_packet)
+                i+=1
         return
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False, simulate_error=False):
         if len(message) <= FRAGMENT_SIZE:
@@ -309,7 +311,6 @@ class Peer:
         corrupted_packages = 0
         terminate_connection = False
         prev_received_identification = 1
-        prev_received_data = ""
 
         # set timeout for waiting
         self.receiving_socket.settimeout(5.0)
@@ -360,8 +361,7 @@ class Peer:
                             f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received damaged!\n")
                         continue
 
-                    if prev_received_data != rec_packet.data:
-                        prev_received_data = rec_packet.data
+                    if rec_packet.identification%5 == 0:
                         print(f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully; original")
                     else: print(f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully; copy")
                     if prev_received_identification != rec_packet.identification:

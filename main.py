@@ -158,25 +158,30 @@ class Peer:
                     self.data_queue.appendleft(packet)
             elif not push_to_front:
                 with self.queue_lock:
-                    self.data_queue.append(packet)
+                    for i in range(5):
+                        self.data_queue.append(packet)
 
         elif len(message) > FRAGMENT_SIZE:  # split data to be sent into multiple fragments if needed
             fragments = [message[i:i + FRAGMENT_SIZE] for i in range(0, len(message), FRAGMENT_SIZE)]
             random_corrupted_packet_id = random.randint(0, len(fragments) - 1) if simulate_error else -1
-            for i, fragment in enumerate(fragments):
-                if i == len(fragments) - 1:  # if it is last fragment, mark it with FRP/ACK
-                    fragment_flag = Flags.FRP_LAST
-                else:
-                    fragment_flag = Flags.FRP
 
-                if i == random_corrupted_packet_id and simulate_error:
-                    packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
-                                    checksum=0, flags=fragment_flag, data=fragment)
-                else:
-                    packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
-                                    checksum=Functions.calc_checksum(fragment.encode()), flags=fragment_flag, data=fragment)
-                with self.queue_lock:
-                    self.data_queue.append(packet)
+            i=0
+            for fragment in fragments:
+                for _ in range(5):
+                    if i == len(fragments)*5 - 1:  # if it is last fragment, mark it with FRP/ACK
+                        fragment_flag = Flags.FRP_LAST
+                    else:
+                        fragment_flag = Flags.FRP
+
+                    if i == random_corrupted_packet_id and simulate_error:
+                        packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                                        checksum=0, flags=fragment_flag, data=fragment)
+                    else:
+                        packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                                        checksum=Functions.calc_checksum(fragment.encode()), flags=fragment_flag, data=fragment)
+                    with self.queue_lock:
+                        self.data_queue.append(packet)
+                    i+=1
         return
 #### SENDING AND RECEIVING #############################################################################################
     def send_data_from_queue(self): # is in send_thread thread
@@ -304,6 +309,7 @@ class Peer:
         corrupted_packages = 0
         terminate_connection = False
         prev_received_identification = 1
+        prev_received_data = ""
 
         # set timeout for waiting
         self.receiving_socket.settimeout(5.0)
@@ -353,7 +359,11 @@ class Peer:
                         print(
                             f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received damaged!\n")
                         continue
-                    print(f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
+
+                    if prev_received_data != rec_packet.data:
+                        prev_received_data = rec_packet.data
+                        print(f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully; original")
+                    else: print(f"received fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully; copy")
                     if prev_received_identification != rec_packet.identification:
                         fragments.append(rec_packet)
                         if rec_packet.identification == 1: transfer_start_time = time.time()
@@ -555,30 +565,22 @@ class Peer:
                 print("\n~$ ", end='', flush=True)
 
 if __name__ == '__main__':
-    MY_IP = input("Enter YOUR IP address: ")
-    PEERS_IP = input("Enter PEER's IP address: ")
-    PEER_SEND_PORT = int(input("Enter your send port: "))
-    PEER_LISTEN_PORT = int(input("Enter your listening port:"))
-
-    if MY_IP < PEERS_IP: start_handshake = True
-    elif MY_IP==PEERS_IP:
-        if PEER_LISTEN_PORT > PEER_SEND_PORT:
-            start_handshake = True
-        else:
-            start_handshake = False
-    else: start_handshake = False
+    # MY_IP = input("Enter YOUR IP address: ")
+    # PEERS_IP = input("Enter PEER's IP address: ")
+    # PEER_SEND_PORT = int(input("Enter your send port: "))
+    # PEER_LISTEN_PORT = int(input("Enter your listening port:"))
 
     ## FOR LOCALHOST TESTING
-    # MY_IP = "localhost"
-    # whos_this = input("peer one (1) or peer two (2): ")
-    # if whos_this == "1":
-    #  PEERS_IP = "localhost"
-    #  PEER_LISTEN_PORT = 8000
-    #  PEER_SEND_PORT = 7000
-    # else:
-    #  PEERS_IP = "localhost"
-    #  PEER_LISTEN_PORT = 7000
-    #  PEER_SEND_PORT = 8000
+    MY_IP = "localhost"
+    whos_this = input("peer one (1) or peer two (2): ")
+    if whos_this == "1":
+     PEERS_IP = "localhost"
+     PEER_LISTEN_PORT = 8000
+     PEER_SEND_PORT = 7000
+    else:
+     PEERS_IP = "localhost"
+     PEER_LISTEN_PORT = 7000
+     PEER_SEND_PORT = 8000
 
     peer = Peer(MY_IP, PEERS_IP, PEER_LISTEN_PORT, PEER_SEND_PORT)
 #### HANDSHAKE #########################################################################################################

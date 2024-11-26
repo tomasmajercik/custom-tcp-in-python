@@ -1,3 +1,4 @@
+import hashlib
 import os
 import queue
 import socket
@@ -131,22 +132,32 @@ class Peer:
         # if simulate error is on
         corrupted_packet_id = random.randint(0, num_fragments - 1) if simulate_error else -1
 
+        sha256_hash = hashlib.sha256()
         # 2. send file data in fragments
         with open(file_path, "rb") as f:
             for i in range(num_fragments):
                 fragment = f.read(FRAGMENT_SIZE)
                 if not fragment:
                     break  # End of file reached
-                # If this is the last fragment, set the flag to LAST_FILE
-                fragment_flag = Flags.LAST_FILE if i == num_fragments - 1 else Flags.FILE
+
 
                 if corrupted_packet_id == i:
                     fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
-                                             checksum=0, flags=fragment_flag, data=fragment)
+                                             checksum=0, flags=Flags.FILE, data=fragment)
                 else:
                     fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
-                                             checksum=Functions.calc_checksum(fragment), flags=fragment_flag, data=fragment)
+                                             checksum=Functions.calc_checksum(fragment), flags=Flags.FILE, data=fragment)
+
+                sha256_hash.update(fragment_packet.data)
                 with self.queue_lock: self.data_queue.append(fragment_packet)
+
+        calculated_hash = sha256_hash.hexdigest()
+        print(f"Calculated hash: {calculated_hash}")
+        hash_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, checksum=Functions.calc_checksum(calculated_hash),
+                             flags=Flags.LAST_FILE, data=calculated_hash)
+        with self.queue_lock: self.data_queue.append(hash_packet)
+
+
         return
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False, simulate_error=False):
         if len(message) <= FRAGMENT_SIZE:
@@ -423,14 +434,22 @@ class Peer:
 
                     continue
                 elif rec_packet.flags == Flags.LAST_FILE:
-                    if not Functions.compare_checksum(rec_packet.checksum, rec_packet.data): # if checksum corrupted
-                        print(
-                            f"received file fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received damaged!\n")
-                        corrupted_packages += 1
-                        self.enqueue_message(flags_to_send=Flags.NACK, push_to_front=True)  # notify that message came currupted
-                        continue
+
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
-                    fragments.append(rec_packet)
+
+                    received_hash = rec_packet.data.decode()
+                    print("===========")
+                    sha256_hash = hashlib.sha256()
+                    for fragment in fragments:
+                        sha256_hash.update(fragment.data)
+                    calculated_hash = sha256_hash.hexdigest()
+
+                    if calculated_hash == received_hash:
+                        print(f"Hashes match! calc: {calculated_hash} \nrec: {received_hash}")
+                    else:
+                        print(f"Hashes do not match! calc: {calculated_hash} \nrec: {received_hash}")
+                    print("===========")
+
                     self.enable_input.set()
                     print(
                         f"received file fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
@@ -555,30 +574,22 @@ class Peer:
                 print("\n~$ ", end='', flush=True)
 
 if __name__ == '__main__':
-    MY_IP = input("Enter YOUR IP address: ")
-    PEERS_IP = input("Enter PEER's IP address: ")
-    PEER_SEND_PORT = int(input("Enter your send port: "))
-    PEER_LISTEN_PORT = int(input("Enter your listening port:"))
-
-    if MY_IP < PEERS_IP: start_handshake = True
-    elif MY_IP==PEERS_IP:
-        if PEER_LISTEN_PORT > PEER_SEND_PORT:
-            start_handshake = True
-        else:
-            start_handshake = False
-    else: start_handshake = False
+    # MY_IP = input("Enter YOUR IP address: ")
+    # PEERS_IP = input("Enter PEER's IP address: ")
+    # PEER_SEND_PORT = int(input("Enter your send port: "))
+    # PEER_LISTEN_PORT = int(input("Enter your listening port:"))
 
     ## FOR LOCALHOST TESTING
-    # MY_IP = "localhost"
-    # whos_this = input("peer one (1) or peer two (2): ")
-    # if whos_this == "1":
-    #  PEERS_IP = "localhost"
-    #  PEER_LISTEN_PORT = 8000
-    #  PEER_SEND_PORT = 7000
-    # else:
-    #  PEERS_IP = "localhost"
-    #  PEER_LISTEN_PORT = 7000
-    #  PEER_SEND_PORT = 8000
+    MY_IP = "localhost"
+    whos_this = input("peer one (1) or peer two (2): ")
+    if whos_this == "1":
+     PEERS_IP = "localhost"
+     PEER_LISTEN_PORT = 8000
+     PEER_SEND_PORT = 7000
+    else:
+     PEERS_IP = "localhost"
+     PEER_LISTEN_PORT = 7000
+     PEER_SEND_PORT = 8000
 
     peer = Peer(MY_IP, PEERS_IP, PEER_LISTEN_PORT, PEER_SEND_PORT)
 #### HANDSHAKE #########################################################################################################

@@ -149,6 +149,12 @@ class Peer:
                 with self.queue_lock: self.data_queue.append(fragment_packet)
         return
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False, simulate_error=False):
+
+        if flags_to_send == Flags.NONE:
+            message = "_BEGIN_" + message + "_END_"
+            message = Functions.caesar(message, 3)
+
+
         if len(message) <= FRAGMENT_SIZE:
             packet = Packet(identification=0, checksum=Functions.calc_checksum(message), flags=flags_to_send,data=message)
             if simulate_error:
@@ -365,7 +371,7 @@ class Peer:
                     if rec_packet.flags == Flags.FRP_LAST:
                         message, number_of_fragments = Functions.rebuild_fragmented_message(fragments)
 
-                        print(f"\n<<<< Received <<<<\n{message.decode()} (message of {len(message)} bytes was Received as "
+                        print(f"\n<<<< Received <<<<\n{message.decode()} ({Functions.caesar(message.decode(), -3)}) \n(message of {len(message)} bytes was Received as "
                               f"{number_of_fragments} fragments in {time.time() - transfer_start_time:.2f} seconds)\n<<<< Received <<<< \n")
                         fragments = []  # reset fragments
                         prev_received_identification = 1
@@ -386,7 +392,7 @@ class Peer:
                         self.enqueue_message(flags_to_send=Flags.NACK, push_to_front=True)  # notify that message came currupted
                         continue
 
-                    print(f"\n\n<<<< Received <<<<\n{rec_packet.data.decode()} \n<<<< Received <<<< \n")
+                    print(f"\n\n<<<< Received <<<<\n{rec_packet.data.decode()} ({Functions.caesar(rec_packet.data.decode(), -3)})\n<<<< Received <<<< \n")
                     #### send ACK to signal data were received correctly
                     self.ack_num = rec_packet.seq_num + len(rec_packet.data)
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
@@ -555,30 +561,22 @@ class Peer:
                 print("\n~$ ", end='', flush=True)
 
 if __name__ == '__main__':
-    MY_IP = input("Enter YOUR IP address: ")
-    PEERS_IP = input("Enter PEER's IP address: ")
-    PEER_SEND_PORT = int(input("Enter your send port: "))
-    PEER_LISTEN_PORT = int(input("Enter your listening port:"))
+    # MY_IP = input("Enter YOUR IP address: ")
+    # PEERS_IP = input("Enter PEER's IP address: ")
+    # PEER_SEND_PORT = int(input("Enter your send port: "))
+    # PEER_LISTEN_PORT = int(input("Enter your listening port:"))
 
-    if MY_IP < PEERS_IP: start_handshake = True
-    elif MY_IP==PEERS_IP:
-        if PEER_LISTEN_PORT > PEER_SEND_PORT:
-            start_handshake = True
-        else:
-            start_handshake = False
-    else: start_handshake = False
-
-    ## FOR LOCALHOST TESTING
-    # MY_IP = "localhost"
-    # whos_this = input("peer one (1) or peer two (2): ")
-    # if whos_this == "1":
-    #  PEERS_IP = "localhost"
-    #  PEER_LISTEN_PORT = 8000
-    #  PEER_SEND_PORT = 7000
-    # else:
-    #  PEERS_IP = "localhost"
-    #  PEER_LISTEN_PORT = 7000
-    #  PEER_SEND_PORT = 8000
+    # FOR LOCALHOST TESTING
+    MY_IP = "localhost"
+    whos_this = input("peer one (1) or peer two (2): ")
+    if whos_this == "1":
+     PEERS_IP = "localhost"
+     PEER_LISTEN_PORT = 8000
+     PEER_SEND_PORT = 7000
+    else:
+     PEERS_IP = "localhost"
+     PEER_LISTEN_PORT = 7000
+     PEER_SEND_PORT = 8000
 
     peer = Peer(MY_IP, PEERS_IP, PEER_LISTEN_PORT, PEER_SEND_PORT)
 #### HANDSHAKE #########################################################################################################

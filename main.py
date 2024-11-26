@@ -139,7 +139,6 @@ class Peer:
                 if not fragment:
                     break  # End of file reached
                 # If this is the last fragment, set the flag to LAST_FILE
-                fragment_flag = Flags.LAST_FILE if i == num_fragments - 1 else Flags.FILE
 
                 if corrupted_packet_id == i:
                     fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,

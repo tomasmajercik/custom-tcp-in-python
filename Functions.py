@@ -48,3 +48,24 @@ class Functions:
         else:
             print("\nChecksum does not match - message corrupted")
             return False
+
+    @staticmethod
+    def encrypt(message):
+        # ahoj → ha jo
+        result = ""
+        subresult = ""
+        i = 1
+        for letter in message:
+            subresult += letter
+            if i % 2 == 0:
+                result += subresult[1] + subresult[0] + " "
+                subresult = ""
+            i+=1
+        return result
+
+
+
+
+
+
+

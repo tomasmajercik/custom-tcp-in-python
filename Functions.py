@@ -48,3 +48,22 @@ class Functions:
         else:
             print("\nChecksum does not match - message corrupted")
             return False
+
+    @staticmethod
+    def caesar(message, shift=0):
+        new_message = ""
+
+        for letter in message:
+            if letter.isalpha():
+                start = ord('A') if letter.isupper() else ord('a')
+                new_letter = chr( ( ord(letter) - start + shift )%26 + start )
+            elif letter.isdigit():
+                new_letter = str((int(letter) + shift)%10)
+            else:
+                new_letter = letter
+
+            new_message += new_letter
+        return new_message
+
+
+

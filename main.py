@@ -1,4 +1,3 @@
-import hashlib
 import os
 import queue
 import socket
@@ -133,14 +132,13 @@ class Peer:
         corrupted_packet_id = random.randint(0, num_fragments - 1) if simulate_error else -1
 
         # 2. send file data in fragments
-        sha256 = hashlib.sha256()
         with open(file_path, "rb") as f:
             for i in range(num_fragments):
                 fragment = f.read(FRAGMENT_SIZE)
                 if not fragment:
                     break  # End of file reached
                 # If this is the last fragment, set the flag to LAST_FILE
-                fragment_flag = Flags.FILE
+                fragment_flag = Flags.LAST_FILE if i == num_fragments - 1 else Flags.FILE
 
                 if corrupted_packet_id == i:
                     fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
@@ -148,14 +146,7 @@ class Peer:
                 else:
                     fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
                                              checksum=Functions.calc_checksum(fragment), flags=fragment_flag, data=fragment)
-
-                sha256.update(fragment_packet.data)
                 with self.queue_lock: self.data_queue.append(fragment_packet)
-
-        calc_hash = sha256.hexdigest()
-        hash_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, checksum=Functions.calc_checksum(calc_hash),
-                                 flags=Flags.LAST_FILE, data=calc_hash)
-        with self.queue_lock: self.data_queue.append(hash_packet)
         return
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False, simulate_error=False):
         if len(message) <= FRAGMENT_SIZE:
@@ -256,6 +247,10 @@ class Peer:
                     print("\n!!! Received NACK - resending packet !!!\n")
                     # recauculate checksum
                     packet_to_send.checksum = Functions.calc_checksum(packet_to_send.data)
+
+                    for _ in range(5-1):
+                        with self.queue_lock: self.data_queue.appendleft(packet_to_send)
+
                     self.received_NACK.clear()
                     continue
                 ###### print sending status if sending file ######
@@ -313,8 +308,6 @@ class Peer:
         corrupted_packages = 0
         terminate_connection = False
         prev_received_identification = 1
-
-        sha256 = hashlib.sha256()
 
         # set timeout for waiting
         self.receiving_socket.settimeout(5.0)
@@ -430,8 +423,6 @@ class Peer:
 
                     if prev_received_identification != rec_packet.identification:
                         fragments.append(rec_packet)
-                        sha256.update(rec_packet.data)
-
                     prev_received_identification = rec_packet.identification
 
                     continue
@@ -443,17 +434,10 @@ class Peer:
                         self.enqueue_message(flags_to_send=Flags.NACK, push_to_front=True)  # notify that message came currupted
                         continue
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True)  # send ack
-                    # fragments.append(rec_packet)
-
-                    recv_hash = rec_packet.data.decode()
-                    calc_hash = sha256.hexdigest()
-
-                    if recv_hash == calc_hash:
-                        print(f"\nhashes match: {recv_hash}")
-                    elif recv_hash != calc_hash:
-                        print(f"\nhashes do not match: {recv_hash}/{calc_hash}")
-
+                    fragments.append(rec_packet)
                     self.enable_input.set()
+                    print(
+                        f"received file fragment -> id:{rec_packet.identification}, seq:{rec_packet.seq_num}, received succesfully")
                     data_size = file_to_receive_metadata.decode().split(":")[1]
                     print(f"\n\nAll packages received in {time.time() - transfer_start_time:.2f} seconds \n"
                           f"{corrupted_packages}/{len(fragments)} packages lost\n"

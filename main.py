@@ -15,6 +15,8 @@ FRAGMENT_SIZE = 1443
 MAX_FRAGMENT_SIZE = 1443 # Ethernet-IP Header-UDP Header-Custom Protocol Header = 1500−20−8-15 = 1457
 kal_delivery_error = 0
 
+ALL_BYTES_RECV = 0
+
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
         #queue
@@ -132,14 +134,13 @@ class Peer:
         corrupted_packet_id = random.randint(0, num_fragments - 1) if simulate_error else -1
 
         # 2. send file data in fragments
-        i=0
         with open(file_path, "rb") as f:
-            for _ in range(num_fragments*5):
-                if i%5 == 0: fragment = f.read(FRAGMENT_SIZE)
+            for i in range(num_fragments):
+                fragment = f.read(FRAGMENT_SIZE)
                 if not fragment:
                     break  # End of file reached
                 # If this is the last fragment, set the flag to LAST_FILE
-                fragment_flag = Flags.LAST_FILE if i == num_fragments*5 - 1 else Flags.FILE
+                fragment_flag = Flags.LAST_FILE if i == num_fragments - 1 else Flags.FILE
 
                 if corrupted_packet_id == i:
                     fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
@@ -148,7 +149,6 @@ class Peer:
                     fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
                                              checksum=Functions.calc_checksum(fragment), flags=fragment_flag, data=fragment)
                 with self.queue_lock: self.data_queue.append(fragment_packet)
-                i+=1
         return
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False, simulate_error=False):
         if len(message) <= FRAGMENT_SIZE:
@@ -160,31 +160,25 @@ class Peer:
                     self.data_queue.appendleft(packet)
             elif not push_to_front:
                 with self.queue_lock:
-                    for _ in range(5):
-                        self.data_queue.append(packet)
+                    self.data_queue.append(packet)
 
         elif len(message) > FRAGMENT_SIZE:  # split data to be sent into multiple fragments if needed
             fragments = [message[i:i + FRAGMENT_SIZE] for i in range(0, len(message), FRAGMENT_SIZE)]
             random_corrupted_packet_id = random.randint(0, len(fragments) - 1) if simulate_error else -1
+            for i, fragment in enumerate(fragments):
+                if i == len(fragments) - 1:  # if it is last fragment, mark it with FRP/ACK
+                    fragment_flag = Flags.FRP_LAST
+                else:
+                    fragment_flag = Flags.FRP
 
-            i=0
-            for fragment in fragments:
-                for _ in range(5):
-                    if i == len(fragments)*5 - 1:  # if it is last fragment, mark it with FRP/ACK
-                        fragment_flag = Flags.FRP_LAST
-                    else:
-                        fragment_flag = Flags.FRP
-
-                    if i == random_corrupted_packet_id and simulate_error:
-                        packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
-                                        checksum=0, flags=fragment_flag, data=fragment)
-                    else:
-                        packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
-                                        checksum=Functions.calc_checksum(fragment.encode()), flags=fragment_flag, data=fragment)
-
-                    with self.queue_lock:
-                        self.data_queue.append(packet)
-                    i+=1
+                if i == random_corrupted_packet_id and simulate_error:
+                    packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                                    checksum=0, flags=fragment_flag, data=fragment)
+                else:
+                    packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                                    checksum=Functions.calc_checksum(fragment.encode()), flags=fragment_flag, data=fragment)
+                with self.queue_lock:
+                    self.data_queue.append(packet)
         return
 #### SENDING AND RECEIVING #############################################################################################
     def send_data_from_queue(self): # is in send_thread thread
@@ -313,6 +307,8 @@ class Peer:
         terminate_connection = False
         prev_received_identification = 1
 
+        global ALL_BYTES_RECV
+
         # set timeout for waiting
         self.receiving_socket.settimeout(5.0)
         while not self.terminate_listening:
@@ -320,6 +316,9 @@ class Peer:
                 # receive data
                 packet_data, addr = self.receiving_socket.recvfrom(1500)
                 rec_packet = Packet.deconcatenate(packet_data)
+
+                ALL_BYTES_RECV += len(rec_packet.data) + 15#bytes header
+
 
                 if rec_packet.flags not in {Flags.KAL, Flags.KAL_ACK, Flags.ACK}:
                     # print("daco som dostal")
@@ -375,6 +374,7 @@ class Peer:
 
                         print(f"\n<<<< Received <<<<\n{message.decode()} (message of {len(message)} bytes was Received as "
                               f"{number_of_fragments} fragments in {time.time() - transfer_start_time:.2f} seconds)\n<<<< Received <<<< \n")
+                        print(f"\nTotal bytes received: {ALL_BYTES_RECV}")
                         fragments = []  # reset fragments
                         prev_received_identification = 1
                     continue
@@ -395,6 +395,7 @@ class Peer:
                         continue
 
                     print(f"\n\n<<<< Received <<<<\n{rec_packet.data.decode()} \n<<<< Received <<<< \n")
+                    print(f"\nTotal bytes received: {ALL_BYTES_RECV}")
                     #### send ACK to signal data were received correctly
                     self.ack_num = rec_packet.seq_num + len(rec_packet.data)
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
@@ -446,6 +447,7 @@ class Peer:
                     print(f"\n\nAll packages received in {time.time() - transfer_start_time:.2f} seconds \n"
                           f"{corrupted_packages}/{len(fragments)} packages lost\n"
                           f"Size of received file: {data_size} bytes")
+                    print(f"\nTotal bytes received: {ALL_BYTES_RECV}")
                     print("Enter desired path to save file: ")
 
                     # start thread to merge fragments together but do not block main program

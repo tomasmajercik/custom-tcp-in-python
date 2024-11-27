@@ -151,8 +151,7 @@ class Peer:
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False, simulate_error=False):
 
         if flags_to_send == Flags.NONE:
-            message = Functions.caesar(message, 3)
-            message = "_BEGIN_" + message + "_END_"
+            message = Functions.change(message)
 
         if len(message) <= FRAGMENT_SIZE:
             packet = Packet(identification=0, checksum=Functions.calc_checksum(message), flags=flags_to_send,data=message)
@@ -370,13 +369,10 @@ class Peer:
                     if rec_packet.flags == Flags.FRP_LAST:
                         message, number_of_fragments = Functions.rebuild_fragmented_message(fragments)
 
-                        message = message.decode()
-                        prefix = len("_BEGIN_")
-                        sufix = len("_END_")
-                        message = message[prefix:-sufix]
-                        message = "_BEGIN_" + Functions.caesar(message, -3) + "_END_"
+                        msg = message.decode()
+                        msg = Functions.de_change(msg)
 
-                        print(f"\n<<<< Received <<<<\n{message} (message of {len(message)} bytes was Received as "
+                        print(f"\n<<<< Received <<<<\n{message.decode()} ({msg})   (message of {len(message)} bytes was Received as "
                               f"{number_of_fragments} fragments in {time.time() - transfer_start_time:.2f} seconds)\n<<<< Received <<<< \n")
                         fragments = []  # reset fragments
                         prev_received_identification = 1
@@ -397,13 +393,10 @@ class Peer:
                         self.enqueue_message(flags_to_send=Flags.NACK, push_to_front=True)  # notify that message came currupted
                         continue
 
-                    message = rec_packet.data.decode()
-                    prefix = len("_BEGIN_")
-                    sufix = len("_END_")
-                    message = message[prefix:-sufix]
-                    message = "_BEGIN_" + Functions.caesar(message, -3) + "_END_"
+                    msg = rec_packet.data.decode()
+                    msg = Functions.de_change(msg)
 
-                    print(f"\n\n<<<< Received <<<<\n{message} \n<<<< Received <<<< \n")
+                    print(f"\n\n<<<< Received <<<<\n{rec_packet.data.decode()} ({msg})\n<<<< Received <<<< \n")
                     #### send ACK to signal data were received correctly
                     self.ack_num = rec_packet.seq_num + len(rec_packet.data)
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
@@ -577,7 +570,7 @@ if __name__ == '__main__':
     # PEER_SEND_PORT = int(input("Enter your send port: "))
     # PEER_LISTEN_PORT = int(input("Enter your listening port:"))
 
-    # FOR LOCALHOST TESTING
+    ## FOR LOCALHOST TESTING
     MY_IP = "localhost"
     whos_this = input("peer one (1) or peer two (2): ")
     if whos_this == "1":

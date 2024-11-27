@@ -162,6 +162,8 @@ class Peer:
 
         elif len(message) > FRAGMENT_SIZE:  # split data to be sent into multiple fragments if needed
             fragments = [message[i:i + FRAGMENT_SIZE] for i in range(0, len(message), FRAGMENT_SIZE)]
+            fragments = fragments[1::2]
+
             random_corrupted_packet_id = random.randint(0, len(fragments) - 1) if simulate_error else -1
             for i, fragment in enumerate(fragments):
                 if i == len(fragments) - 1:  # if it is last fragment, mark it with FRP/ACK
@@ -247,10 +249,6 @@ class Peer:
                     print("\n!!! Received NACK - resending packet !!!\n")
                     # recauculate checksum
                     packet_to_send.checksum = Functions.calc_checksum(packet_to_send.data)
-
-                    for _ in range(5-1):
-                        with self.queue_lock: self.data_queue.appendleft(packet_to_send)
-
                     self.received_NACK.clear()
                     continue
                 ###### print sending status if sending file ######

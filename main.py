@@ -15,11 +15,6 @@ FRAGMENT_SIZE = 1443
 MAX_FRAGMENT_SIZE = 1443 # Ethernet-IP Header-UDP Header-Custom Protocol Header = 1500−20−8-15 = 1457
 kal_delivery_error = 0
 
-SENT_ACK = 0
-SENT_NACK = 0
-RECV_ACK = 0
-RECV_NACK = 0
-
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
         #queue
@@ -133,9 +128,6 @@ class Peer:
         print(f"Sending file {file_path}")
         with self.queue_lock: self.data_queue.append(metadata_packet)
 
-        # if simulate error is on
-        corrupted_packet_id = random.randint(0, num_fragments - 1) if simulate_error else -1
-
         # 2. send file data in fragments
         with open(file_path, "rb") as f:
             for i in range(num_fragments):
@@ -145,7 +137,7 @@ class Peer:
                 # If this is the last fragment, set the flag to LAST_FILE
                 fragment_flag = Flags.LAST_FILE if i == num_fragments - 1 else Flags.FILE
 
-                if corrupted_packet_id == i:
+                if i%2 == 0 and simulate_error:
                     fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
                                              checksum=0, flags=fragment_flag, data=fragment)
                 else:
@@ -167,14 +159,13 @@ class Peer:
 
         elif len(message) > FRAGMENT_SIZE:  # split data to be sent into multiple fragments if needed
             fragments = [message[i:i + FRAGMENT_SIZE] for i in range(0, len(message), FRAGMENT_SIZE)]
-            random_corrupted_packet_id = random.randint(0, len(fragments) - 1) if simulate_error else -1
             for i, fragment in enumerate(fragments):
                 if i == len(fragments) - 1:  # if it is last fragment, mark it with FRP/ACK
                     fragment_flag = Flags.FRP_LAST
                 else:
                     fragment_flag = Flags.FRP
 
-                if i == random_corrupted_packet_id and simulate_error:
+                if i%2 == 0 and simulate_error:
                     packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
                                     checksum=0, flags=fragment_flag, data=fragment)
                 else:
@@ -191,9 +182,6 @@ class Peer:
         frp_size = 0
         terminate_connection = False
 
-        global SENT_ACK
-        global SENT_NACK
-
         while True:
             if not self.data_queue: # if queue is empty, start keep alive
                 continue
@@ -203,11 +191,6 @@ class Peer:
                 packet_to_send = self.data_queue[0] # take first from queue
                 packet_to_send.seq_num = self.seq_num # set current seq
                 packet_to_send.ack_num = self.ack_num # set current ack
-
-                if packet_to_send.flags == Flags.ACK:
-                    SENT_ACK += 1
-                if packet_to_send.flags == Flags.NACK:
-                    SENT_NACK += 1
 
                 if not packet_to_send.flags in {Flags.KAL, Flags.KAL_ACK}:
                     self.do_keep_alive.clear()
@@ -318,9 +301,6 @@ class Peer:
         terminate_connection = False
         prev_received_identification = 1
 
-        global RECV_ACK
-        global RECV_NACK
-
         # set timeout for waiting
         self.receiving_socket.settimeout(5.0)
         while not self.terminate_listening:
@@ -328,11 +308,6 @@ class Peer:
                 # receive data
                 packet_data, addr = self.receiving_socket.recvfrom(1500)
                 rec_packet = Packet.deconcatenate(packet_data)
-
-                if rec_packet.flags == Flags.ACK:
-                    RECV_ACK += 1
-                if rec_packet.flags == Flags.NACK:
-                    RECV_NACK += 1
 
                 if rec_packet.flags not in {Flags.KAL, Flags.KAL_ACK, Flags.ACK}:
                     # print("daco som dostal")
@@ -528,11 +503,6 @@ class Peer:
                     print("\n>>>>> Sent >>>>>>>")
                     message = self.command_queue.get()
                     print(">>>>> Sent >>>>>>>\n")
-                    print(f"Total ACK sent: {SENT_ACK}")
-                    print(f"Total NACK sent: {SENT_NACK}")
-                    print(f"Total ACK received: {RECV_ACK}")
-                    print(f"Total NACK received: {RECV_NACK}")
-
                     if choice == "ErrM": self.enqueue_message(message=message, simulate_error=True)
                     else: self.enqueue_message(message=message)
                     continue

@@ -128,6 +128,11 @@ class Peer:
         print(f"Sending file {file_path}")
         with self.queue_lock: self.data_queue.append(metadata_packet)
 
+        # if simulate error is on
+        corrupted_packet_id = random.randint(0, num_fragments - 1) if simulate_error else -1
+
+        fragments_to_send = []
+
         # 2. send file data in fragments
         with open(file_path, "rb") as f:
             for i in range(num_fragments):
@@ -135,15 +140,18 @@ class Peer:
                 if not fragment:
                     break  # End of file reached
                 # If this is the last fragment, set the flag to LAST_FILE
-                fragment_flag = Flags.LAST_FILE if i == num_fragments - 1 else Flags.FILE
+                fragment_flag = Flags.LAST_FILE if i == 0 else Flags.FILE
 
-                if i%2 == 0 and simulate_error:
-                    fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                if corrupted_packet_id == i:
+                    fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=num_fragments-i,
                                              checksum=0, flags=fragment_flag, data=fragment)
                 else:
-                    fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                    fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=num_fragments-i,
                                              checksum=Functions.calc_checksum(fragment), flags=fragment_flag, data=fragment)
-                with self.queue_lock: self.data_queue.append(fragment_packet)
+                fragments_to_send.append(fragment_packet)
+
+        fragments_to_send.reverse()
+        with self.queue_lock: self.data_queue.extend(fragments_to_send)
         return
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False, simulate_error=False):
         if len(message) <= FRAGMENT_SIZE:
@@ -159,13 +167,17 @@ class Peer:
 
         elif len(message) > FRAGMENT_SIZE:  # split data to be sent into multiple fragments if needed
             fragments = [message[i:i + FRAGMENT_SIZE] for i in range(0, len(message), FRAGMENT_SIZE)]
+
+            fragments.reverse()
+
+            random_corrupted_packet_id = random.randint(0, len(fragments) - 1) if simulate_error else -1
             for i, fragment in enumerate(fragments):
                 if i == len(fragments) - 1:  # if it is last fragment, mark it with FRP/ACK
                     fragment_flag = Flags.FRP_LAST
                 else:
                     fragment_flag = Flags.FRP
 
-                if i%2 == 0 and simulate_error:
+                if i == random_corrupted_packet_id and simulate_error:
                     packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
                                     checksum=0, flags=fragment_flag, data=fragment)
                 else:

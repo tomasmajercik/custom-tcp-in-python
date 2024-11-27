@@ -560,7 +560,7 @@ if __name__ == '__main__':
     # PEER_SEND_PORT = int(input("Enter your send port: "))
     # PEER_LISTEN_PORT = int(input("Enter your listening port:"))
 
-    ## FOR LOCALHOST TESTING
+    # FOR LOCALHOST TESTING
     MY_IP = "localhost"
     whos_this = input("peer one (1) or peer two (2): ")
     if whos_this == "1":

@@ -132,13 +132,14 @@ class Peer:
         corrupted_packet_id = random.randint(0, num_fragments - 1) if simulate_error else -1
 
         # 2. send file data in fragments
+        i=0
         with open(file_path, "rb") as f:
-            for i in range(num_fragments):
-                fragment = f.read(FRAGMENT_SIZE)
+            for _ in range(num_fragments*5):
+                if i%5 == 0: fragment = f.read(FRAGMENT_SIZE)
                 if not fragment:
                     break  # End of file reached
                 # If this is the last fragment, set the flag to LAST_FILE
-                fragment_flag = Flags.LAST_FILE if i == num_fragments - 1 else Flags.FILE
+                fragment_flag = Flags.LAST_FILE if i == num_fragments*5 - 1 else Flags.FILE
 
                 if corrupted_packet_id == i:
                     fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
@@ -147,6 +148,7 @@ class Peer:
                     fragment_packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
                                              checksum=Functions.calc_checksum(fragment), flags=fragment_flag, data=fragment)
                 with self.queue_lock: self.data_queue.append(fragment_packet)
+                i+=1
         return
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False, simulate_error=False):
         if len(message) <= FRAGMENT_SIZE:
@@ -158,27 +160,31 @@ class Peer:
                     self.data_queue.appendleft(packet)
             elif not push_to_front:
                 with self.queue_lock:
-                    self.data_queue.append(packet)
+                    for _ in range(5):
+                        self.data_queue.append(packet)
 
         elif len(message) > FRAGMENT_SIZE:  # split data to be sent into multiple fragments if needed
             fragments = [message[i:i + FRAGMENT_SIZE] for i in range(0, len(message), FRAGMENT_SIZE)]
-            fragments = fragments[0::2]
-
             random_corrupted_packet_id = random.randint(0, len(fragments) - 1) if simulate_error else -1
-            for i, fragment in enumerate(fragments):
-                if i == len(fragments) - 1:  # if it is last fragment, mark it with FRP/ACK
-                    fragment_flag = Flags.FRP_LAST
-                else:
-                    fragment_flag = Flags.FRP
 
-                if i == random_corrupted_packet_id and simulate_error:
-                    packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
-                                    checksum=0, flags=fragment_flag, data=fragment)
-                else:
-                    packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
-                                    checksum=Functions.calc_checksum(fragment.encode()), flags=fragment_flag, data=fragment)
-                with self.queue_lock:
-                    self.data_queue.append(packet)
+            i=0
+            for fragment in fragments:
+                for _ in range(5):
+                    if i == len(fragments)*5 - 1:  # if it is last fragment, mark it with FRP/ACK
+                        fragment_flag = Flags.FRP_LAST
+                    else:
+                        fragment_flag = Flags.FRP
+
+                    if i == random_corrupted_packet_id and simulate_error:
+                        packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                                        checksum=0, flags=fragment_flag, data=fragment)
+                    else:
+                        packet = Packet(seq_num=self.seq_num, ack_num=self.ack_num, identification=i,
+                                        checksum=Functions.calc_checksum(fragment.encode()), flags=fragment_flag, data=fragment)
+
+                    with self.queue_lock:
+                        self.data_queue.append(packet)
+                    i+=1
         return
 #### SENDING AND RECEIVING #############################################################################################
     def send_data_from_queue(self): # is in send_thread thread

@@ -15,6 +15,9 @@ FRAGMENT_SIZE = 1443
 MAX_FRAGMENT_SIZE = 1443 # Ethernet-IP Header-UDP Header-Custom Protocol Header = 1500−20−8-15 = 1457
 kal_delivery_error = 0
 
+ALL_FRAGMENTS_REC = 0
+ALL_BAD_FRAGMENTS_REC = 0
+
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
         #queue
@@ -307,6 +310,9 @@ class Peer:
         terminate_connection = False
         prev_received_identification = 1
 
+        global ALL_FRAGMENTS_REC
+        global ALL_BAD_FRAGMENTS_REC
+
         # set timeout for waiting
         self.receiving_socket.settimeout(5.0)
         while not self.terminate_listening:
@@ -314,9 +320,9 @@ class Peer:
                 # receive data
                 packet_data, addr = self.receiving_socket.recvfrom(1500)
                 rec_packet = Packet.deconcatenate(packet_data)
+                ALL_FRAGMENTS_REC += 1
 
                 if rec_packet.flags not in {Flags.KAL, Flags.KAL_ACK, Flags.ACK}:
-                    # print("daco som dostal")
                     self.do_keep_alive.clear()
 
                 ####### rec. ACK/NACK ##################################################################################
@@ -329,6 +335,7 @@ class Peer:
                         return
                     else: continue
                 elif rec_packet.flags == Flags.NACK:
+                    ALL_BAD_FRAGMENTS_REC += 1
                     self.received_NACK.set()
                     self.received_ack.set()
                 ####### TERMINATON #####################################################################################
@@ -551,6 +558,9 @@ class Peer:
                 elif choice == "!q" or choice == "quit":
                     self.enqueue_message(flags_to_send=Flags.TER, push_to_front=True)
                     return
+                elif choice == "d":
+                    print(f"All fragments received: {ALL_FRAGMENTS_REC}")
+                    print(f"Corrupted packets from that: {ALL_BAD_FRAGMENTS_REC}")
                 else:
                     print("invalid command")
             finally:

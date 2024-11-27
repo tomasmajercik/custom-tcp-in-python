@@ -49,28 +49,4 @@ class Functions:
             print("\nChecksum does not match - message corrupted")
             return False
 
-    @staticmethod
-    def change(message):
-        new_message = ""
-        # abCd141a → ba dC 41 a1
 
-        for i in range(0, len(message), 2):
-            if i+1 < len(message):
-                new_message += message[i+1] + message[i] + " "
-            else: new_message += message[i]
-
-        return new_message
-    @staticmethod
-    def de_change(message):
-        new_message = ""
-        for letter in message:
-            if letter != " ":
-                new_message += letter
-
-        final_message = ""
-
-        for i in range(0, len(new_message), 2):
-            if i+1 < len(new_message):
-                final_message += new_message[i+1] + new_message[i]
-            else: final_message += new_message[i]
-        return final_message

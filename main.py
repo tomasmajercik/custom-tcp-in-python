@@ -15,6 +15,11 @@ FRAGMENT_SIZE = 1443
 MAX_FRAGMENT_SIZE = 1443 # Ethernet-IP Header-UDP Header-Custom Protocol Header = 1500−20−8-15 = 1457
 kal_delivery_error = 0
 
+SENT_ACK = 0
+SENT_NACK = 0
+RECV_ACK = 0
+RECV_NACK = 0
+
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
         #queue
@@ -149,10 +154,6 @@ class Peer:
                 with self.queue_lock: self.data_queue.append(fragment_packet)
         return
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False, simulate_error=False):
-
-        if flags_to_send == Flags.NONE:
-            message = Functions.change(message)
-
         if len(message) <= FRAGMENT_SIZE:
             packet = Packet(identification=0, checksum=Functions.calc_checksum(message), flags=flags_to_send,data=message)
             if simulate_error:
@@ -190,6 +191,9 @@ class Peer:
         frp_size = 0
         terminate_connection = False
 
+        global SENT_ACK
+        global SENT_NACK
+
         while True:
             if not self.data_queue: # if queue is empty, start keep alive
                 continue
@@ -199,6 +203,11 @@ class Peer:
                 packet_to_send = self.data_queue[0] # take first from queue
                 packet_to_send.seq_num = self.seq_num # set current seq
                 packet_to_send.ack_num = self.ack_num # set current ack
+
+                if packet_to_send.flags == Flags.ACK:
+                    SENT_ACK += 1
+                if packet_to_send.flags == Flags.NACK:
+                    SENT_NACK += 1
 
                 if not packet_to_send.flags in {Flags.KAL, Flags.KAL_ACK}:
                     self.do_keep_alive.clear()
@@ -309,6 +318,9 @@ class Peer:
         terminate_connection = False
         prev_received_identification = 1
 
+        global RECV_ACK
+        global RECV_NACK
+
         # set timeout for waiting
         self.receiving_socket.settimeout(5.0)
         while not self.terminate_listening:
@@ -316,6 +328,11 @@ class Peer:
                 # receive data
                 packet_data, addr = self.receiving_socket.recvfrom(1500)
                 rec_packet = Packet.deconcatenate(packet_data)
+
+                if rec_packet.flags == Flags.ACK:
+                    RECV_ACK += 1
+                if rec_packet.flags == Flags.NACK:
+                    RECV_NACK += 1
 
                 if rec_packet.flags not in {Flags.KAL, Flags.KAL_ACK, Flags.ACK}:
                     # print("daco som dostal")
@@ -369,10 +386,7 @@ class Peer:
                     if rec_packet.flags == Flags.FRP_LAST:
                         message, number_of_fragments = Functions.rebuild_fragmented_message(fragments)
 
-                        msg = message.decode()
-                        msg = Functions.de_change(msg)
-
-                        print(f"\n<<<< Received <<<<\n{message.decode()} ({msg})   (message of {len(message)} bytes was Received as "
+                        print(f"\n<<<< Received <<<<\n{message.decode()} (message of {len(message)} bytes was Received as "
                               f"{number_of_fragments} fragments in {time.time() - transfer_start_time:.2f} seconds)\n<<<< Received <<<< \n")
                         fragments = []  # reset fragments
                         prev_received_identification = 1
@@ -393,10 +407,7 @@ class Peer:
                         self.enqueue_message(flags_to_send=Flags.NACK, push_to_front=True)  # notify that message came currupted
                         continue
 
-                    msg = rec_packet.data.decode()
-                    msg = Functions.de_change(msg)
-
-                    print(f"\n\n<<<< Received <<<<\n{rec_packet.data.decode()} ({msg})\n<<<< Received <<<< \n")
+                    print(f"\n\n<<<< Received <<<<\n{rec_packet.data.decode()} \n<<<< Received <<<< \n")
                     #### send ACK to signal data were received correctly
                     self.ack_num = rec_packet.seq_num + len(rec_packet.data)
                     self.enqueue_message("", flags_to_send=Flags.ACK, push_to_front=True) # send ack
@@ -517,6 +528,11 @@ class Peer:
                     print("\n>>>>> Sent >>>>>>>")
                     message = self.command_queue.get()
                     print(">>>>> Sent >>>>>>>\n")
+                    print(f"Total ACK sent: {SENT_ACK}")
+                    print(f"Total NACK sent: {SENT_NACK}")
+                    print(f"Total ACK received: {RECV_ACK}")
+                    print(f"Total NACK received: {RECV_NACK}")
+
                     if choice == "ErrM": self.enqueue_message(message=message, simulate_error=True)
                     else: self.enqueue_message(message=message)
                     continue

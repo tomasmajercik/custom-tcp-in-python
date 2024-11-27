@@ -161,7 +161,9 @@ class Peer:
                     self.data_queue.append(packet)
 
         elif len(message) > FRAGMENT_SIZE:  # split data to be sent into multiple fragments if needed
-            fragments = [message[i:i + FRAGMENT_SIZE] for i in range(0, len(message), FRAGMENT_SIZE)]
+            frags = [message[i:i + FRAGMENT_SIZE] for i in range(0, len(message), FRAGMENT_SIZE)]
+            fragments = frags[::2]
+
             random_corrupted_packet_id = random.randint(0, len(fragments) - 1) if simulate_error else -1
             for i, fragment in enumerate(fragments):
                 if i == len(fragments) - 1:  # if it is last fragment, mark it with FRP/ACK
@@ -555,30 +557,22 @@ class Peer:
                 print("\n~$ ", end='', flush=True)
 
 if __name__ == '__main__':
-    MY_IP = input("Enter YOUR IP address: ")
-    PEERS_IP = input("Enter PEER's IP address: ")
-    PEER_SEND_PORT = int(input("Enter your send port: "))
-    PEER_LISTEN_PORT = int(input("Enter your listening port:"))
+    # MY_IP = input("Enter YOUR IP address: ")
+    # PEERS_IP = input("Enter PEER's IP address: ")
+    # PEER_SEND_PORT = int(input("Enter your send port: "))
+    # PEER_LISTEN_PORT = int(input("Enter your listening port:"))
 
-    if MY_IP < PEERS_IP: start_handshake = True
-    elif MY_IP==PEERS_IP:
-        if PEER_LISTEN_PORT > PEER_SEND_PORT:
-            start_handshake = True
-        else:
-            start_handshake = False
-    else: start_handshake = False
-
-    ## FOR LOCALHOST TESTING
-    # MY_IP = "localhost"
-    # whos_this = input("peer one (1) or peer two (2): ")
-    # if whos_this == "1":
-    #  PEERS_IP = "localhost"
-    #  PEER_LISTEN_PORT = 8000
-    #  PEER_SEND_PORT = 7000
-    # else:
-    #  PEERS_IP = "localhost"
-    #  PEER_LISTEN_PORT = 7000
-    #  PEER_SEND_PORT = 8000
+    # FOR LOCALHOST TESTING
+    MY_IP = "localhost"
+    whos_this = input("peer one (1) or peer two (2): ")
+    if whos_this == "1":
+     PEERS_IP = "localhost"
+     PEER_LISTEN_PORT = 8000
+     PEER_SEND_PORT = 7000
+    else:
+     PEERS_IP = "localhost"
+     PEER_LISTEN_PORT = 7000
+     PEER_SEND_PORT = 8000
 
     peer = Peer(MY_IP, PEERS_IP, PEER_LISTEN_PORT, PEER_SEND_PORT)
 #### HANDSHAKE #########################################################################################################

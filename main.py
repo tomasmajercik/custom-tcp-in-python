@@ -15,6 +15,11 @@ FRAGMENT_SIZE = 1443
 MAX_FRAGMENT_SIZE = 1443 # Ethernet-IP Header-UDP Header-Custom Protocol Header = 1500−20−8-15 = 1457
 kal_delivery_error = 0
 
+SENT_ACK = 0
+RECV_ACK = 0
+SENT_NACK = 0
+RECV_NACK = 0
+
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
         #queue
@@ -186,6 +191,9 @@ class Peer:
         frp_size = 0
         terminate_connection = False
 
+        global SENT_ACK
+        global SENT_NACK
+
         while True:
             if not self.data_queue: # if queue is empty, start keep alive
                 continue
@@ -200,6 +208,11 @@ class Peer:
                     self.do_keep_alive.clear()
                     global kal_delivery_error
                     kal_delivery_error = 0
+                if packet_to_send.flags == Flags.ACK:
+                    SENT_ACK += 1
+                if packet_to_send.flags == Flags.NACK:
+                    SENT_NACK += 1
+
 
                 # data for printing
                 if packet_to_send.flags == Flags.F_INFO:
@@ -305,6 +318,9 @@ class Peer:
         terminate_connection = False
         prev_received_identification = 1
 
+        global RECV_ACK
+        global RECV_NACK
+
         # set timeout for waiting
         self.receiving_socket.settimeout(5.0)
         while not self.terminate_listening:
@@ -312,6 +328,12 @@ class Peer:
                 # receive data
                 packet_data, addr = self.receiving_socket.recvfrom(1500)
                 rec_packet = Packet.deconcatenate(packet_data)
+
+                if rec_packet.flags == Flags.ACK:
+                    RECV_ACK += 1
+                if rec_packet.flags == Flags.NACK:
+                    RECV_NACK += 1
+
 
                 if rec_packet.flags not in {Flags.KAL, Flags.KAL_ACK, Flags.ACK}:
                     # print("daco som dostal")
@@ -549,6 +571,11 @@ class Peer:
                 elif choice == "!q" or choice == "quit":
                     self.enqueue_message(flags_to_send=Flags.TER, push_to_front=True)
                     return
+                elif choice == "d":
+                    print(f"ACKs sent: {SENT_ACK}")
+                    print(f"NACKs sent: {SENT_NACK}")
+                    print(f"ACKs received: {RECV_ACK}")
+                    print(f"NACKs received: {RECV_NACK}")
                 else:
                     print("invalid command")
             finally:

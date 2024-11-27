@@ -48,3 +48,14 @@ class Functions:
         else:
             print("\nChecksum does not match - message corrupted")
             return False
+
+    @staticmethod
+    def encode_message(message):
+        new_message = ""
+        for letter in message:
+            if letter.isdigit():
+                letter = str((int(letter) + 1)%10)
+            new_message += letter
+        return new_message.swapcase()
+
+

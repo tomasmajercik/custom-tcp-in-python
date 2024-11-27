@@ -162,7 +162,7 @@ class Peer:
 
         elif len(message) > FRAGMENT_SIZE:  # split data to be sent into multiple fragments if needed
             fragments = [message[i:i + FRAGMENT_SIZE] for i in range(0, len(message), FRAGMENT_SIZE)]
-            fragments = fragments[1::2]
+            fragments = fragments[0::2]
 
             random_corrupted_packet_id = random.randint(0, len(fragments) - 1) if simulate_error else -1
             for i, fragment in enumerate(fragments):

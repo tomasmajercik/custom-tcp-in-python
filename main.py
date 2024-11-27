@@ -246,6 +246,10 @@ class Peer:
                 if self.received_NACK.is_set():
                     print("\n!!! Received NACK - resending packet !!!\n")
                     # recauculate checksum
+                    for i in range(5):
+                        print("bu")
+                        with self.queue_lock:
+                            self.data_queue.appendleft(packet_to_send)
                     packet_to_send.checksum = Functions.calc_checksum(packet_to_send.data)
                     self.received_NACK.clear()
                     continue
@@ -278,9 +282,11 @@ class Peer:
                 while True:
                     if self.received_NACK.is_set():
                         print("\n!!! Received NACK - resending packet !!!\n")
+
                         # recauculate checksum
                         packet_to_send.checksum = Functions.calc_checksum(packet_to_send.data)
                         self.received_NACK.clear()
+
                     else:
                         print("!ACK not received, resending packet!")
 

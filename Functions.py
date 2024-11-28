@@ -48,15 +48,3 @@ class Functions:
         else:
             print("\nChecksum does not match - message corrupted")
             return False
-
-    @staticmethod
-    def change(message):
-        new_message = ""
-
-        for letter in message:
-            if letter.isnumeric():
-                new_message += str((int(letter)+1)%10)
-            else:
-                new_message += letter
-
-        return new_message.swapcase()

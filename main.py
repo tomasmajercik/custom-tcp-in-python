@@ -149,9 +149,6 @@ class Peer:
                 with self.queue_lock: self.data_queue.append(fragment_packet)
         return
     def enqueue_message(self, message="", flags_to_send=Flags.NONE, push_to_front=False, simulate_error=False):
-
-        message = Functions.change(message)
-
         if len(message) <= FRAGMENT_SIZE:
             packet = Packet(identification=0, checksum=Functions.calc_checksum(message), flags=flags_to_send,data=message)
             if simulate_error:

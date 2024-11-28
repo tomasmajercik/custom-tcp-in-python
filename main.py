@@ -15,6 +15,9 @@ FRAGMENT_SIZE = 1443
 MAX_FRAGMENT_SIZE = 1443 # Ethernet-IP Header-UDP Header-Custom Protocol Header = 1500−20−8-15 = 1457
 kal_delivery_error = 0
 
+TOTAL_BYTES_TRAFFIC = 0
+TOTAL_BYTES_HEADER = 0
+
 class Peer:
     def __init__(self, my_ip, target_ip, listen_port, send_port):
         #queue
@@ -186,6 +189,9 @@ class Peer:
         frp_size = 0
         terminate_connection = False
 
+        global TOTAL_BYTES_TRAFFIC
+        global TOTAL_BYTES_HEADER
+
         while True:
             if not self.data_queue: # if queue is empty, start keep alive
                 continue
@@ -195,6 +201,22 @@ class Peer:
                 packet_to_send = self.data_queue[0] # take first from queue
                 packet_to_send.seq_num = self.seq_num # set current seq
                 packet_to_send.ack_num = self.ack_num # set current ack
+
+                # doimplementacia
+                if packet_to_send.flags not in {Flags.KAL, Flags.KAL_ACK, Flags.ACK, Flags.NACK, Flags.TER,
+                                                Flags.TER_ACK, Flags.CFL}:
+                    TOTAL_BYTES_TRAFFIC += len(packet_to_send.data) + 15
+                    TOTAL_BYTES_HEADER += 15 # 15 is the size of header
+
+                    if packet_to_send.flags in {Flags.NONE, Flags.FRP_LAST, Flags.LAST_FILE}:
+                        print("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+                        print(f"Cela rezia: {TOTAL_BYTES_TRAFFIC}B")
+                        percentage = ((TOTAL_BYTES_HEADER / TOTAL_BYTES_TRAFFIC) * 100)
+                        print(f"{percentage:.2f}% z toho je hlavicka (rezia)")
+                        print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+
+                        TOTAL_BYTES_TRAFFIC = 0
+                        TOTAL_BYTES_HEADER = 0
 
                 if not packet_to_send.flags in {Flags.KAL, Flags.KAL_ACK}:
                     self.do_keep_alive.clear()
@@ -305,6 +327,9 @@ class Peer:
         terminate_connection = False
         prev_received_identification = 1
 
+        global TOTAL_BYTES_TRAFFIC
+        global TOTAL_BYTES_HEADER
+
         # set timeout for waiting
         self.receiving_socket.settimeout(5.0)
         while not self.terminate_listening:
@@ -312,6 +337,24 @@ class Peer:
                 # receive data
                 packet_data, addr = self.receiving_socket.recvfrom(1500)
                 rec_packet = Packet.deconcatenate(packet_data)
+
+                # doimplementacia
+                if rec_packet.flags not in {Flags.KAL, Flags.KAL_ACK, Flags.ACK, Flags.NACK, Flags.TER,
+                                            Flags.TER_ACK, Flags.CFL, Flags.CFL}:
+                    TOTAL_BYTES_TRAFFIC += len(rec_packet.data) + 15
+                    TOTAL_BYTES_HEADER += 15 # 15 is the size of header
+
+                    if rec_packet.flags in {Flags.NONE, Flags.LAST_FILE, Flags.FRP_LAST}:
+                        print("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+                        print(f"Cela rezia: {TOTAL_BYTES_TRAFFIC}B")
+                        percentage = ((TOTAL_BYTES_HEADER / TOTAL_BYTES_TRAFFIC) * 100)
+                        print(f"{percentage:.2f}% z toho hlavicka (rezia)")
+                        print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+
+                        TOTAL_BYTES_TRAFFIC = 0
+                        TOTAL_BYTES_HEADER = 0
+
+
 
                 if rec_packet.flags not in {Flags.KAL, Flags.KAL_ACK, Flags.ACK}:
                     # print("daco som dostal")
@@ -507,6 +550,7 @@ class Peer:
                     print("\n>>>>> Sent >>>>>>>")
                     message = self.command_queue.get()
                     print(">>>>> Sent >>>>>>>\n")
+
                     if choice == "ErrM": self.enqueue_message(message=message, simulate_error=True)
                     else: self.enqueue_message(message=message)
                     continue

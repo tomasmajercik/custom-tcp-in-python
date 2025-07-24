@@ -23,7 +23,8 @@ Following several more weeks of polishing and testing, I **successfully built a 
 - File I/O
 
 ### 📊 Preview
-<iframe width="560" height="315" src="https://www.youtube.com/embed/RDbhX7eBqpQ?si=ht6d6ZstbanUden1" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+Click on this image to watch preview: <br>
+[![Watch the video preview here](https://img.youtube.com/vi/RDbhX7eBqpQ/0.jpg)](https://www.youtube.com/watch?v=RDbhX7eBqpQ)
 
 
 ### ⚙️ How to run

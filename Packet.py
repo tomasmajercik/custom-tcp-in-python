@@ -1,28 +1,30 @@
+import struct
+
 class Packet:
-    def __init__(self, message, seq_num = 0, ack_num=0, flags=0):
-        self.message = message
+
+    HEADER_FORMAT = 'IIIHB'  # two integers, one 16-bit unsigned short for checksum (16 bits), and one byte for flags
+
+    def __init__(self, seq_num = 0, ack_num=0, identification=0, checksum=0, flags=0, data=""):
         self.seq_num = seq_num
         self.ack_num = ack_num
+        self.identification = identification
+        self.checksum = checksum
         self.flags = flags
+        # Ensure data is bytes - if already in bytes, let it be, if not (is a string), encode it using utf-8
+        self.data = data if isinstance(data, bytes) else data.encode('utf-8')
 
     def concatenate(self):
-        return f"{self.seq_num}|{self.ack_num}|{self.flags:03b}|{self.message}"
-
-    def get_message(self):
-        # parts = encoded_packet.split('|', 3)
-        # message = parts[3]
-        return self.message
+        header = struct.pack(self.HEADER_FORMAT, self.seq_num, self.ack_num, self.identification, self.checksum,
+                             self.flags)
+        return header + self.data # add bytes data
 
     @staticmethod
-    def deconcatenate(packet_str):
-        parts = packet_str.split('|')
-        seq_num = int(parts[0])
-        ack_num = int(parts[1])
-        flags = int(parts[2], 2)  # Parse binary string
-        message = parts[3]
-        return Packet(message, seq_num, ack_num, flags)
+    def deconcatenate(data_bytes):
+        header_size = struct.calcsize(Packet.HEADER_FORMAT)
+        header_data = data_bytes[:header_size]
+        data = data_bytes[header_size:]
 
-    #co mi treba dokoncit
-    # fin ale podobne ako tcp handshake
-    # ak sa nevrati ack tak resendnut
-    # spravit poriadne ten stop and wait
+        # Unpack the header
+        seq_num, ack_num, identification, checksum, flags = struct.unpack(Packet.HEADER_FORMAT, header_data)
+        return Packet(seq_num, ack_num, identification, checksum, flags, data)
+
